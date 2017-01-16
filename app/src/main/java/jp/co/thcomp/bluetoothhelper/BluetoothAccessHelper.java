@@ -103,7 +103,11 @@ public class BluetoothAccessHelper {
                 sAccessHelperList.remove(accessHelper);
 
                 if (sAccessHelperList.size() == 0) {
-                    context.unregisterReceiver(sBroadcastReceiver);
+                    try {
+                        context.unregisterReceiver(sBroadcastReceiver);
+                    } catch (IllegalArgumentException e) {
+                        // 処理なし
+                    }
                     if (sAdapter != null) {
                         sAdapter.cancelDiscovery();
                     }
@@ -177,7 +181,7 @@ public class BluetoothAccessHelper {
     private final HashMap<BluetoothDevice, DataBox> mBondingDeviceMap = new HashMap<>();
     private boolean mStartHelper = false;
     private Thread mSendDataThread;
-    private final HashMap<BluetoothDevice, BluetoothSocket> mConnectedSocketMap = new HashMap<>();
+    private final HashMap<BluetoothDevice, BluetoothSocket> mSerialPortProfileConnectedSocketMap = new HashMap<>();
 
     public BluetoothAccessHelper(Context context, String applicationName) {
         if (context == null || applicationName == null || applicationName.length() == 0) {
@@ -245,14 +249,14 @@ public class BluetoothAccessHelper {
             LocalBroadcastManager.getInstance(mContext).unregisterReceiver(mLocalBroadcastReceiver);
             removeBluetoothAccessHelper(this);
 
-            synchronized (mConnectedSocketMap) {
-                for (BluetoothSocket connectedSocket : mConnectedSocketMap.values()) {
+            synchronized (mSerialPortProfileConnectedSocketMap) {
+                for (BluetoothSocket connectedSocket : mSerialPortProfileConnectedSocketMap.values()) {
                     try {
                         connectedSocket.close();
                     } catch (IOException e) {
                     }
                 }
-                mConnectedSocketMap.clear();
+                mSerialPortProfileConnectedSocketMap.clear();
             }
         }
     }
@@ -318,16 +322,16 @@ public class BluetoothAccessHelper {
         return true;
     }
 
-    public boolean sendData(BluetoothDevice device, byte[] data) {
-        return sendData(device, data, 0, data.length);
+    public boolean sendDataOnSerialPortProfile(BluetoothDevice device, byte[] data) {
+        return sendDataOnSerialPortProfile(device, data, 0, data.length);
     }
 
-    public boolean sendData(BluetoothDevice device, byte[] data, int offset, int length) {
+    public boolean sendDataOnSerialPortProfile(BluetoothDevice device, byte[] data, int offset, int length) {
         boolean ret = false;
 
         if (mStartHelper && device != null && data != null) {
             synchronized (mSendDataQueue) {
-                DataBox dataBox = new DataBox(device, data, offset, length);
+                SppDataBox dataBox = new SppDataBox(device, data, offset, length);
                 if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
                     mSendDataQueue.add(dataBox);
                     mSendDataQueue.notify();
@@ -348,11 +352,11 @@ public class BluetoothAccessHelper {
         return ret;
     }
 
-    public int readData(BluetoothDevice device, byte[] readBuffer) {
+    public int readDataOnSerialPortProfile(BluetoothDevice device, byte[] readBuffer) {
         int ret = -1;
 
-        synchronized (mConnectedSocketMap) {
-            BluetoothSocket socket = getClientSocket(device);
+        synchronized (mSerialPortProfileConnectedSocketMap) {
+            BluetoothSocket socket = getServerSocket(device);
 
             if (socket != null) {
                 InputStream stream = null;
@@ -468,10 +472,10 @@ public class BluetoothAccessHelper {
         mContext.startActivity(launchIntent);
     }
 
-    private BluetoothSocket getClientSocket(BluetoothDevice device) {
+    private BluetoothSocket getClientSocket(DataBox dataBox) {
         BluetoothSocket clientSocket = null;
-        synchronized (mConnectedSocketMap) {
-            clientSocket = mConnectedSocketMap.get(device);
+        synchronized (mSerialPortProfileConnectedSocketMap) {
+            clientSocket = mSerialPortProfileConnectedSocketMap.get(dataBox.mDevice);
         }
 
         if (clientSocket == null || !clientSocket.isConnected()) {
@@ -484,10 +488,10 @@ public class BluetoothAccessHelper {
 
             // create connection socket
             try {
-                clientSocket = device.createRfcommSocketToServiceRecord(UUID.nameUUIDFromBytes(mApplicationName.getBytes()));
+                clientSocket = dataBox.mDevice.createRfcommSocketToServiceRecord(dataBox.mTargetUUID);
                 clientSocket.connect();
-                synchronized (mConnectedSocketMap) {
-                    mConnectedSocketMap.put(device, clientSocket);
+                synchronized (mSerialPortProfileConnectedSocketMap) {
+                    mSerialPortProfileConnectedSocketMap.put(dataBox.mDevice, clientSocket);
                 }
             } catch (IOException e) {
                 LogUtil.e(TAG, e.getLocalizedMessage());
@@ -495,6 +499,15 @@ public class BluetoothAccessHelper {
         }
 
         return clientSocket;
+    }
+
+    private BluetoothSocket getServerSocket(BluetoothDevice device) {
+        BluetoothSocket serverSocket = null;
+        synchronized (mSerialPortProfileConnectedSocketMap) {
+            serverSocket = mSerialPortProfileConnectedSocketMap.get(device);
+        }
+
+        return serverSocket;
     }
 
     private void notifySendDataError(int result, DataBox dataBox) {
@@ -518,6 +531,7 @@ public class BluetoothAccessHelper {
     }
 
     private static class DataBox {
+        UUID mTargetUUID;
         BluetoothDevice mDevice;
         byte[] mData;
         int mOffset = 0;
@@ -532,6 +546,13 @@ public class BluetoothAccessHelper {
             mData = data;
             mOffset = offset;
             mLength = length;
+        }
+    }
+
+    private static class SppDataBox extends DataBox {
+        SppDataBox(BluetoothDevice device, byte[] data, int offset, int length) {
+            super(device, data, offset, length);
+            mTargetUUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
         }
     }
 
@@ -560,7 +581,7 @@ public class BluetoothAccessHelper {
                 dataBox = (DataBox) mSendDataQueue.poll();
                 if (dataBox != null) {
                     // send data
-                    BluetoothSocket clientSocket = getClientSocket(dataBox.mDevice);
+                    BluetoothSocket clientSocket = getClientSocket(dataBox);
 
                     if (clientSocket != null && clientSocket.isConnected()) {
                         try {
@@ -617,8 +638,8 @@ public class BluetoothAccessHelper {
                     }
 
                     if (mStartHelper && (connectedSocket != null)) {
-                        synchronized (mConnectedSocketMap) {
-                            mConnectedSocketMap.put(connectedSocket.getRemoteDevice(), connectedSocket);
+                        synchronized (mSerialPortProfileConnectedSocketMap) {
+                            mSerialPortProfileConnectedSocketMap.put(connectedSocket.getRemoteDevice(), connectedSocket);
                         }
                     }
                 }
