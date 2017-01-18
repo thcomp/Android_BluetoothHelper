@@ -35,6 +35,21 @@ public class BluetoothAccessHelper {
     public static final int StatusProgress = 1;
     public static final int StatusStartBluetooth = 10;
 
+    public static final UUID BT_SDP = UUID.fromString("00000001-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_RFCOMM = UUID.fromString("00000003-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_OBEX = UUID.fromString("00000008-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_HTTP = UUID.fromString("0000000C-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_L2CAP = UUID.fromString("00000100-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_SERIAL_PORT = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_SERVICE_DISCOVERY_SERVER_SERVICE_CLASS_ID = UUID.fromString("00001000-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_BROWSER_GROUP_DESCRIPTOR_SERVICE_CLASS_ID = UUID.fromString("00001001-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_PUBLIC_BROWSE_GROUP = UUID.fromString("00001002-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_OBEX_OBJECT_PUSH = UUID.fromString("00001105-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_OBEX_FILE_TRANSFER = UUID.fromString("00001106-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_PERSONAL_AREA_NETWORK_USER = UUID.fromString("00001115-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_NETWORK_ACCESS_POINT = UUID.fromString("00001116-0000-1000-8000-00805F9B34FB");
+    public static final UUID BT_GROUP_NETWORK = UUID.fromString("00001117-0000-1000-8000-00805F9B34FB");
+
     public static final int ServerInit = 0;
     public static final int ServerAccept = 1;
     public static final int ServerReceiveData = 2;
@@ -58,6 +73,8 @@ public class BluetoothAccessHelper {
     private static final String LaunchBluetooth = "LaunchBluetooth";
     private static final int LaunchBluetoothInt = LaunchBluetooth.hashCode() & 0x0000FFFF;
     private static final int StopDiscover = "StopDiscover".hashCode();
+    private static final int MaxConnectionRetryCount = 3;
+    private static final int ConnectionRetryIntervalMS = 1000;
 
     public interface OnBluetoothStatusListener {
         void onStatusChange(int status, int scanMode);
@@ -159,7 +176,7 @@ public class BluetoothAccessHelper {
                                         break;
                                     default:
                                         // give up to send data and notify error
-                                        accessHelper.notifySendDataError(SendFailByBondError, databox);
+                                        accessHelper.notifySendDataResult(SendFailByBondError, databox);
                                         break;
                                 }
 
@@ -173,6 +190,7 @@ public class BluetoothAccessHelper {
 
     private Context mContext;
     private String mApplicationName;
+    private UUID mServerUuid = null;
     private Handler mMainLooperHandler;
     private OnBluetoothStatusListener mStatusListener;
     private OnNotifyResultListener mNotifyResultListener;
@@ -181,15 +199,31 @@ public class BluetoothAccessHelper {
     private final HashMap<BluetoothDevice, DataBox> mBondingDeviceMap = new HashMap<>();
     private boolean mStartHelper = false;
     private Thread mSendDataThread;
-    private final HashMap<BluetoothDevice, BluetoothSocket> mSerialPortProfileConnectedSocketMap = new HashMap<>();
+    private final HashMap<BluetoothDevice, HashMap<UUID, BluetoothSocket>> mConnectedSocketMap = new HashMap<>();
 
     public BluetoothAccessHelper(Context context, String applicationName) {
+        this(context, applicationName, null);
+    }
+
+    public BluetoothAccessHelper(Context context, String applicationName, String uuidText) {
         if (context == null || applicationName == null || applicationName.length() == 0) {
-            throw new NullPointerException();
+            throw new NullPointerException("context == null || applicationName == null || applicationName.length() == 0");
         }
         mContext = context;
+
         mApplicationName = applicationName;
+        if (uuidText != null) {
+            mServerUuid = UUID.fromString(uuidText);
+        }
         mMainLooperHandler = new Handler(context.getMainLooper(), mMessageCallback);
+    }
+
+    public void setServerUuid(String uuidText) {
+        if (uuidText == null) {
+            throw new NullPointerException("uuidText == null");
+        }
+
+        mServerUuid = UUID.fromString(uuidText);
     }
 
     public void setOnBluetoothStatusListener(OnBluetoothStatusListener listener) {
@@ -249,15 +283,7 @@ public class BluetoothAccessHelper {
             LocalBroadcastManager.getInstance(mContext).unregisterReceiver(mLocalBroadcastReceiver);
             removeBluetoothAccessHelper(this);
 
-            synchronized (mSerialPortProfileConnectedSocketMap) {
-                for (BluetoothSocket connectedSocket : mSerialPortProfileConnectedSocketMap.values()) {
-                    try {
-                        connectedSocket.close();
-                    } catch (IOException e) {
-                    }
-                }
-                mSerialPortProfileConnectedSocketMap.clear();
-            }
+            disconnectAll();
         }
     }
 
@@ -299,7 +325,7 @@ public class BluetoothAccessHelper {
     public boolean startServer() {
         boolean ret = false;
 
-        if (mStartHelper) {
+        if (mStartHelper && (mServerUuid != null)) {
             if (mServerSocket == null) {
                 new Thread(mServerSocketRunnable).start();
             }
@@ -322,16 +348,80 @@ public class BluetoothAccessHelper {
         return true;
     }
 
-    public boolean sendDataOnSerialPortProfile(BluetoothDevice device, byte[] data) {
-        return sendDataOnSerialPortProfile(device, data, 0, data.length);
+    public boolean isConnected(BluetoothDevice device, UUID targetUuid) {
+        boolean ret = false;
+        HashMap<UUID, BluetoothSocket> connectedSocketMap = null;
+
+        synchronized (mConnectedSocketMap) {
+            connectedSocketMap = mConnectedSocketMap.get(device);
+        }
+
+        if (connectedSocketMap != null) {
+            synchronized (connectedSocketMap) {
+                ret = (connectedSocketMap.get(targetUuid) != null);
+            }
+        }
+
+        return ret;
     }
 
-    public boolean sendDataOnSerialPortProfile(BluetoothDevice device, byte[] data, int offset, int length) {
+    public boolean disconnect(BluetoothDevice device, UUID targetUuid) {
+        boolean ret = false;
+        HashMap<UUID, BluetoothSocket> connectedSocketMap = null;
+
+        synchronized (mConnectedSocketMap) {
+            connectedSocketMap = mConnectedSocketMap.get(device);
+        }
+
+        if (connectedSocketMap != null) {
+            synchronized (connectedSocketMap) {
+                BluetoothSocket connectedSocket = connectedSocketMap.remove(targetUuid);
+                if (connectedSocket != null) {
+                    try {
+                        connectedSocket.close();
+                    } catch (Exception e) {
+                    }
+                }
+
+                ret = true;
+            }
+        }
+
+        return ret;
+    }
+
+    public void disconnectAll() {
+        synchronized (mConnectedSocketMap) {
+            for (HashMap<UUID, BluetoothSocket> socketMap : mConnectedSocketMap.values()) {
+                for (BluetoothSocket connectedSocket : socketMap.values()) {
+                    try {
+                        connectedSocket.close();
+                    } catch (IOException e) {
+                    }
+                }
+            }
+            mConnectedSocketMap.clear();
+        }
+    }
+
+    public boolean sendData(String uuidText, BluetoothDevice device, byte[] data) {
+        return sendData(UUID.fromString(uuidText), device, data, 0, data.length);
+    }
+
+    public boolean sendData(UUID uuid, BluetoothDevice device, byte[] data) {
+        return sendData(uuid, device, data, 0, data.length);
+    }
+
+    public boolean sendData(String uuidText, BluetoothDevice device, byte[] data, int offset, int length) {
+        return sendData(UUID.fromString(uuidText), device, data, offset, length);
+    }
+
+    public boolean sendData(UUID uuid, BluetoothDevice device, byte[] data, int offset, int length) {
         boolean ret = false;
 
         if (mStartHelper && device != null && data != null) {
             synchronized (mSendDataQueue) {
-                SppDataBox dataBox = new SppDataBox(device, data, offset, length);
+                DataBox dataBox = new DataBox(uuid, device, data, offset, length);
                 if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
                     mSendDataQueue.add(dataBox);
                     mSendDataQueue.notify();
@@ -352,26 +442,24 @@ public class BluetoothAccessHelper {
         return ret;
     }
 
-    public int readDataOnSerialPortProfile(BluetoothDevice device, byte[] readBuffer) {
+    public int readData(BluetoothDevice device, UUID uuid, byte[] readBuffer) {
         int ret = -1;
 
-        synchronized (mSerialPortProfileConnectedSocketMap) {
-            BluetoothSocket socket = getServerSocket(device);
+        BluetoothSocket socket = getServerSocket(device, uuid);
 
-            if (socket != null) {
-                InputStream stream = null;
+        if (socket != null) {
+            InputStream stream = null;
+            try {
+                stream = socket.getInputStream();
+            } catch (IOException e) {
+                LogUtil.exception(TAG, e);
+            }
+
+            if (stream != null) {
                 try {
-                    stream = socket.getInputStream();
+                    ret = stream.read(readBuffer);
                 } catch (IOException e) {
                     LogUtil.exception(TAG, e);
-                }
-
-                if (stream != null) {
-                    try {
-                        ret = stream.read(readBuffer);
-                    } catch (IOException e) {
-                        LogUtil.exception(TAG, e);
-                    }
                 }
             }
         }
@@ -406,32 +494,28 @@ public class BluetoothAccessHelper {
     }
 
     private void changeStatus(final OnBluetoothStatusListener targetListener, final Integer status, final Integer scanMode) {
-        if (mContext.getMainLooper().getThread().equals(Thread.currentThread())) {
-            if (status != null) {
-                sBluetoothStatus = status;
-            }
-            if (scanMode != null) {
-                sScanMode = scanMode;
-            }
+        ThreadUtil.runOnMainThread(mContext, new Runnable() {
+            @Override
+            public void run() {
+                if (status != null) {
+                    sBluetoothStatus = status;
+                }
+                if (scanMode != null) {
+                    sScanMode = scanMode;
+                }
 
-            if (targetListener != null) {
-                targetListener.onStatusChange(sBluetoothStatus, sScanMode);
-            } else {
-                BluetoothAccessHelper[] accessHelperArray = sAccessHelperList.toArray(new BluetoothAccessHelper[0]);
-                for (BluetoothAccessHelper accessHelper : accessHelperArray) {
-                    if (accessHelper.mStatusListener != null) {
-                        accessHelper.mStatusListener.onStatusChange(sBluetoothStatus, sScanMode);
+                if (targetListener != null) {
+                    targetListener.onStatusChange(sBluetoothStatus, sScanMode);
+                } else {
+                    BluetoothAccessHelper[] accessHelperArray = sAccessHelperList.toArray(new BluetoothAccessHelper[0]);
+                    for (BluetoothAccessHelper accessHelper : accessHelperArray) {
+                        if (accessHelper.mStatusListener != null) {
+                            accessHelper.mStatusListener.onStatusChange(sBluetoothStatus, sScanMode);
+                        }
                     }
                 }
             }
-        } else {
-            mMainLooperHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    changeStatus(targetListener, status, scanMode);
-                }
-            });
-        }
+        });
     }
 
     private void changeStatus(final Integer status, final Integer scanMode) {
@@ -474,59 +558,95 @@ public class BluetoothAccessHelper {
 
     private BluetoothSocket getClientSocket(DataBox dataBox) {
         BluetoothSocket clientSocket = null;
-        synchronized (mSerialPortProfileConnectedSocketMap) {
-            clientSocket = mSerialPortProfileConnectedSocketMap.get(dataBox.mDevice);
+        HashMap<UUID, BluetoothSocket> connectedSocketMap = null;
+        synchronized (mConnectedSocketMap) {
+            connectedSocketMap = mConnectedSocketMap.get(dataBox.mDevice);
+        }
+        if (connectedSocketMap != null) {
+            synchronized (connectedSocketMap) {
+                clientSocket = connectedSocketMap.get(dataBox.mDevice);
+            }
         }
 
-        if (clientSocket == null || !clientSocket.isConnected()) {
-            if (clientSocket != null) {
-                try {
-                    clientSocket.close();
-                } catch (IOException e) {
+        try {
+            if (clientSocket == null || !clientSocket.isConnected()) {
+                if (clientSocket != null) {
+                    try {
+                        clientSocket.close();
+                    } catch (IOException e) {
+                    }
                 }
-            }
 
-            // create connection socket
-            try {
-                clientSocket = dataBox.mDevice.createRfcommSocketToServiceRecord(dataBox.mTargetUUID);
-                clientSocket.connect();
-                synchronized (mSerialPortProfileConnectedSocketMap) {
-                    mSerialPortProfileConnectedSocketMap.put(dataBox.mDevice, clientSocket);
+                // create connection socket
+                int trialCount = 0;
+                Exception lastException = null;
+                while (trialCount <= MaxConnectionRetryCount) {
+                    try {
+                        clientSocket = dataBox.mDevice.createRfcommSocketToServiceRecord(dataBox.mTargetUUID);
+                        clientSocket.connect();
+
+                        if (connectedSocketMap == null) {
+                            connectedSocketMap = new HashMap<UUID, BluetoothSocket>();
+                            synchronized (mConnectedSocketMap) {
+                                mConnectedSocketMap.put(dataBox.mDevice, connectedSocketMap);
+                            }
+                        }
+
+                        synchronized (connectedSocketMap) {
+                            connectedSocketMap.put(dataBox.mTargetUUID, clientSocket);
+                        }
+
+                        LogUtil.d(TAG, "connection established");
+                        break;
+                    } catch (IOException e) {
+                        lastException = e;
+                        Thread.sleep(ConnectionRetryIntervalMS);
+                        trialCount++;
+                    }
                 }
-            } catch (IOException e) {
-                LogUtil.e(TAG, e.getLocalizedMessage());
+
+                if (lastException != null) {
+                    LogUtil.e(TAG, lastException.getLocalizedMessage());
+                }
+            } else {
+                LogUtil.d(TAG, "reuse connection");
             }
+        } catch (Exception e) {
+            LogUtil.e(TAG, e.getLocalizedMessage());
         }
 
         return clientSocket;
     }
 
-    private BluetoothSocket getServerSocket(BluetoothDevice device) {
+    private BluetoothSocket getServerSocket(BluetoothDevice device, UUID uuid) {
         BluetoothSocket serverSocket = null;
-        synchronized (mSerialPortProfileConnectedSocketMap) {
-            serverSocket = mSerialPortProfileConnectedSocketMap.get(device);
+        HashMap<UUID, BluetoothSocket> connectedSocketMap = null;
+        synchronized (mConnectedSocketMap) {
+            connectedSocketMap = mConnectedSocketMap.get(device);
+        }
+
+        if (connectedSocketMap != null) {
+            synchronized (connectedSocketMap) {
+                serverSocket = connectedSocketMap.get(uuid);
+            }
         }
 
         return serverSocket;
     }
 
-    private void notifySendDataError(int result, DataBox dataBox) {
-        notifySendDataError(result, dataBox.mDevice, dataBox.mData, dataBox.mOffset, dataBox.mLength);
+    private void notifySendDataResult(int result, DataBox dataBox) {
+        notifySendDataResult(result, dataBox.mDevice, dataBox.mData, dataBox.mOffset, dataBox.mLength);
     }
 
-    private void notifySendDataError(final int result, final BluetoothDevice device, final byte[] data, final int offset, final int length) {
+    private void notifySendDataResult(final int result, final BluetoothDevice device, final byte[] data, final int offset, final int length) {
         final OnNotifyResultListener fListener = mNotifyResultListener;
         if (fListener != null) {
-            if (Thread.currentThread().equals(mContext.getMainLooper().getThread())) {
-                fListener.onSendDataResult(result, device, data, offset, length);
-            } else {
-                mMainLooperHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        notifySendDataError(result, device, data, offset, length);
-                    }
-                });
-            }
+            ThreadUtil.runOnMainThread(mContext, new Runnable() {
+                @Override
+                public void run() {
+                    fListener.onSendDataResult(result, device, data, offset, length);
+                }
+            });
         }
     }
 
@@ -537,22 +657,16 @@ public class BluetoothAccessHelper {
         int mOffset = 0;
         int mLength = 0;
 
-        DataBox(BluetoothDevice device, byte[] data, int offset, int length) {
-            if (device == null || data == null) {
-                throw new NullPointerException();
+        DataBox(UUID uuid, BluetoothDevice device, byte[] data, int offset, int length) {
+            if (uuid == null || device == null || data == null) {
+                throw new NullPointerException("uuid == " + uuid + " || device == " + device + " || data == " + data);
             }
 
+            mTargetUUID = uuid;
             mDevice = device;
             mData = data;
             mOffset = offset;
             mLength = length;
-        }
-    }
-
-    private static class SppDataBox extends DataBox {
-        SppDataBox(BluetoothDevice device, byte[] data, int offset, int length) {
-            super(device, data, offset, length);
-            mTargetUUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
         }
     }
 
@@ -586,12 +700,13 @@ public class BluetoothAccessHelper {
                     if (clientSocket != null && clientSocket.isConnected()) {
                         try {
                             clientSocket.getOutputStream().write(dataBox.mData, dataBox.mOffset, dataBox.mLength);
+                            notifySendDataResult(SendSuccess, dataBox);
                         } catch (IOException e) {
                             LogUtil.e(TAG, e.getLocalizedMessage());
-                            notifySendDataError(SendFailByOutputError, dataBox);
+                            notifySendDataResult(SendFailByOutputError, dataBox);
                         }
                     } else {
-                        notifySendDataError(SendFailByConnectError, dataBox);
+                        notifySendDataResult(SendFailByConnectError, dataBox);
                     }
                 }
 
@@ -617,7 +732,7 @@ public class BluetoothAccessHelper {
             synchronized (mServerSocketRunnable) {
                 if (mServerSocket == null) {
                     try {
-                        serverSocket = mServerSocket = sAdapter.listenUsingRfcommWithServiceRecord(mApplicationName, UUID.nameUUIDFromBytes(mApplicationName.getBytes()));
+                        serverSocket = mServerSocket = sAdapter.listenUsingRfcommWithServiceRecord(mApplicationName, mServerUuid);
                     } catch (IOException e) {
                         LogUtil.e(TAG, e.getLocalizedMessage());
                     }
@@ -638,8 +753,13 @@ public class BluetoothAccessHelper {
                     }
 
                     if (mStartHelper && (connectedSocket != null)) {
-                        synchronized (mSerialPortProfileConnectedSocketMap) {
-                            mSerialPortProfileConnectedSocketMap.put(connectedSocket.getRemoteDevice(), connectedSocket);
+                        synchronized (mConnectedSocketMap) {
+                            HashMap<UUID, BluetoothSocket> connectedSocketMap = mConnectedSocketMap.get(mServerUuid);
+                            if (connectedSocketMap == null) {
+                                connectedSocketMap = new HashMap<UUID, BluetoothSocket>();
+                            }
+                            connectedSocketMap.put(mServerUuid, connectedSocket);
+                            mConnectedSocketMap.put(connectedSocket.getRemoteDevice(), connectedSocketMap);
                         }
                     }
                 }
