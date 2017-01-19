@@ -1,0 +1,6 @@
+# http://u1aryz.blogspot.jp/2013/06/githubmavenandroidaar.html
+
+cd <project_home>
+./gradlew assembleRelease
+find . -name '*.aar'
+./gradlew uploadArchives
