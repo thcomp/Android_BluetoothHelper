@@ -256,8 +256,9 @@ public class BluetoothAccessHelper {
         } else {
             if (!mStartHelper) {
                 mStartHelper = true;
+                LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(LaunchBluetooth));
+
                 if (sAdapter.isEnabled()) {
-                    LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(LaunchBluetooth));
                     addBluetoothAccessHelper(this);
                     if (mStatusListener != null) {
                         changeStatus(mStatusListener, StatusStartBluetooth, null);
@@ -346,6 +347,14 @@ public class BluetoothAccessHelper {
             }
         }
         return true;
+    }
+
+    public boolean connect(BluetoothDevice device, UUID targetUuid) {
+        boolean ret = false;
+        DataBox dataBox = new DataBox(targetUuid, device, new byte[0], 0, 0);
+        BluetoothSocket clientSocket = getClientSocket(dataBox);
+
+        return clientSocket != null;
     }
 
     public boolean isConnected(BluetoothDevice device, UUID targetUuid) {
@@ -537,6 +546,10 @@ public class BluetoothAccessHelper {
                     if (listener != null) {
                         listener.onStatusChange(sBluetoothStatus, sScanMode);
                     }
+                } else if (sBluetoothStatus == StatusStartBluetooth) {
+                    // bluetooth is enabled at once, but user changes disabled
+                    enableBluetoothWithConfirmation();
+                    changeStatus(StatusProgress, null);
                 }
             }
         }
@@ -564,7 +577,7 @@ public class BluetoothAccessHelper {
         }
         if (connectedSocketMap != null) {
             synchronized (connectedSocketMap) {
-                clientSocket = connectedSocketMap.get(dataBox.mDevice);
+                clientSocket = connectedSocketMap.get(dataBox.mTargetUUID);
             }
         }
 
@@ -600,6 +613,7 @@ public class BluetoothAccessHelper {
                         break;
                     } catch (IOException e) {
                         lastException = e;
+                        clientSocket = null;
                         Thread.sleep(ConnectionRetryIntervalMS);
                         trialCount++;
                     }
@@ -773,16 +787,14 @@ public class BluetoothAccessHelper {
             String action = intent.getAction();
 
             if (LaunchBluetooth.equals(action)) {
-                Intent retIntent = intent.getParcelableExtra(HandleResultActivity.INTENT_PARCELABLE_EXTRA_TRANSFER_INTENT);
+                int ret = intent.getIntExtra(HandleResultActivity.INTENT_INT_EXTRA_RESULT_CODE_FROM_TARGET, Activity.RESULT_CANCELED);
 
-                if (retIntent != null) {
-                    int ret = retIntent.getIntExtra(HandleResultActivity.INTENT_INT_EXTRA_RESULT_CODE, Activity.RESULT_CANCELED);
-                    if (ret == Activity.RESULT_OK) {
-                        LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(LaunchBluetooth));
-                        addBluetoothAccessHelper(BluetoothAccessHelper.this);
-                        changeStatus(StatusStartBluetooth, null);
-                    }
+                if (ret == Activity.RESULT_OK) {
+                    LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(LaunchBluetooth));
+                    addBluetoothAccessHelper(BluetoothAccessHelper.this);
                 }
+
+                changeStatus(StatusStartBluetooth, null);
             }
         }
     };
