@@ -192,6 +192,7 @@ public class BluetoothAccessHelper {
     private String mApplicationName;
     private UUID mServerUuid = null;
     private Handler mMainLooperHandler;
+    private Handler mNotifyHandler;
     private OnBluetoothStatusListener mStatusListener;
     private OnNotifyResultListener mNotifyResultListener;
     private BluetoothServerSocket mServerSocket = null;
@@ -241,6 +242,10 @@ public class BluetoothAccessHelper {
                 enableBluetooth(null);
             }
         }
+    }
+
+    public void setNotifyHandler(Handler handler) {
+        mNotifyHandler = handler;
     }
 
     public synchronized void startBluetoothHelper() {
@@ -503,7 +508,7 @@ public class BluetoothAccessHelper {
     }
 
     private void changeStatus(final OnBluetoothStatusListener targetListener, final Integer status, final Integer scanMode) {
-        ThreadUtil.runOnMainThread(mContext, new Runnable() {
+        Runnable runnable = new Runnable() {
             @Override
             public void run() {
                 if (status != null) {
@@ -524,7 +529,13 @@ public class BluetoothAccessHelper {
                     }
                 }
             }
-        });
+        };
+
+        if (mNotifyHandler == null) {
+            ThreadUtil.runOnMainThread(mContext, runnable);
+        } else {
+            mNotifyHandler.post(runnable);
+        }
     }
 
     private void changeStatus(final Integer status, final Integer scanMode) {
@@ -655,12 +666,21 @@ public class BluetoothAccessHelper {
     private void notifySendDataResult(final int result, final BluetoothDevice device, final byte[] data, final int offset, final int length) {
         final OnNotifyResultListener fListener = mNotifyResultListener;
         if (fListener != null) {
-            ThreadUtil.runOnMainThread(mContext, new Runnable() {
-                @Override
-                public void run() {
-                    fListener.onSendDataResult(result, device, data, offset, length);
-                }
-            });
+            if (mNotifyHandler == null) {
+                ThreadUtil.runOnMainThread(mContext, new Runnable() {
+                    @Override
+                    public void run() {
+                        fListener.onSendDataResult(result, device, data, offset, length);
+                    }
+                });
+            } else {
+                mNotifyHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        fListener.onSendDataResult(result, device, data, offset, length);
+                    }
+                });
+            }
         }
     }
 
