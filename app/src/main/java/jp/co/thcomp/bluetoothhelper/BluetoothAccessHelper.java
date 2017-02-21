@@ -14,11 +14,13 @@ import android.os.Handler;
 import android.os.Message;
 import android.support.v4.content.LocalBroadcastManager;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.UUID;
@@ -479,6 +481,55 @@ public class BluetoothAccessHelper {
         }
 
         return ret;
+    }
+
+    public byte[] readLine(BluetoothDevice device, UUID uuid, byte[] delimiter) {
+        BluetoothSocket socket = getServerSocket(device, uuid);
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        int delimiterSize = delimiter.length;
+        boolean needRemoveDelimiter = false;
+
+        if (socket != null) {
+            InputStream stream = null;
+            try {
+                stream = socket.getInputStream();
+            } catch (IOException e) {
+                LogUtil.exception(TAG, e);
+            }
+
+            if (stream != null) {
+                byte[] tempBuffer = new byte[delimiterSize];
+                byte[] readBuffer = new byte[1];
+
+                while (true) {
+                    try {
+                        if(stream.read(readBuffer) == 1) {
+                            outputStream.write(readBuffer[0]);
+                        }else{
+                            break;
+                        }
+
+                        byte[] tempOutput = outputStream.toByteArray();
+                        if (tempOutput.length >= delimiterSize) {
+                            for (int i = 0; i < delimiterSize; i++) {
+                                tempBuffer[i] = tempOutput[tempOutput.length - delimiterSize + i];
+                            }
+                        }
+
+                        if (Arrays.equals(tempBuffer, delimiter)) {
+                            // stop read for reach delimiter data
+                            needRemoveDelimiter = true;
+                            break;
+                        }
+                    } catch (IOException e) {
+                        LogUtil.exception(TAG, e);
+                        break;
+                    }
+                }
+            }
+        }
+
+        return needRemoveDelimiter ? Arrays.copyOf(outputStream.toByteArray(), outputStream.size() - delimiterSize) : outputStream.toByteArray();
     }
 
     private boolean createBond(DataBox dataBox) {
