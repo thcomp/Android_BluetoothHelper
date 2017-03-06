@@ -70,6 +70,7 @@ public class BluetoothAccessHelper {
     private static int sScanMode = BluetoothAdapter.SCAN_MODE_NONE;
     private static int sBluetoothStatus = StatusInit;
     private static long sStopDiscoverTimeMS = 0;
+    private static boolean sDebug = false;
 
     private static final String TAG = "BluetoothAccessHelper";
     private static final String LaunchBluetooth = "LaunchBluetooth";
@@ -94,6 +95,14 @@ public class BluetoothAccessHelper {
 
     public interface OnNotifyResultListener {
         void onSendDataResult(int result, BluetoothDevice device, byte[] data, int offset, int length);
+    }
+
+    public static boolean isEnableDebug() {
+        return sDebug;
+    }
+
+    public static void enableDebug(boolean enableDebug) {
+        sDebug = enableDebug;
     }
 
     private static void addBluetoothAccessHelper(BluetoothAccessHelper accessHelper) {
@@ -439,6 +448,9 @@ public class BluetoothAccessHelper {
             synchronized (mSendDataQueue) {
                 DataBox dataBox = new DataBox(uuid, device, data, offset, length);
                 if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                    if (BluetoothAccessHelper.isEnableDebug()) {
+                        LogUtil.d(TAG, "request send data: " + dataBox);
+                    }
                     mSendDataQueue.add(dataBox);
                     mSendDataQueue.notify();
 
@@ -503,9 +515,9 @@ public class BluetoothAccessHelper {
 
                 while (true) {
                     try {
-                        if(stream.read(readBuffer) == 1) {
+                        if (stream.read(readBuffer) == 1) {
                             outputStream.write(readBuffer[0]);
-                        }else{
+                        } else {
                             break;
                         }
 
@@ -753,6 +765,17 @@ public class BluetoothAccessHelper {
             mOffset = offset;
             mLength = length;
         }
+
+        @Override
+        public String toString() {
+            return "DataBox{" +
+                    "mData=" + Arrays.toString(mData) +
+                    ", mTargetUUID=" + mTargetUUID +
+                    ", mDevice=" + mDevice +
+                    ", mOffset=" + mOffset +
+                    ", mLength=" + mLength +
+                    '}';
+        }
     }
 
     private final Handler.Callback mMessageCallback = new Handler.Callback() {
@@ -776,14 +799,19 @@ public class BluetoothAccessHelper {
         public void run() {
             DataBox dataBox = null;
 
-            while (mStartHelper || mSendDataQueue.size() > 0) {
-                dataBox = (DataBox) mSendDataQueue.poll();
+            while (mStartHelper) {
+                synchronized (mSendDataQueue) {
+                    dataBox = (DataBox) mSendDataQueue.poll();
+                }
                 if (dataBox != null) {
                     // send data
                     BluetoothSocket clientSocket = getClientSocket(dataBox);
 
                     if (clientSocket != null && clientSocket.isConnected()) {
                         try {
+                            if (BluetoothAccessHelper.isEnableDebug()) {
+                                LogUtil.d(TAG, "send data: " + dataBox);
+                            }
                             clientSocket.getOutputStream().write(dataBox.mData, dataBox.mOffset, dataBox.mLength);
                             notifySendDataResult(SendSuccess, dataBox);
                         } catch (IOException e) {
@@ -793,19 +821,22 @@ public class BluetoothAccessHelper {
                     } else {
                         notifySendDataResult(SendFailByConnectError, dataBox);
                     }
+                } else {
+                    if (BluetoothAccessHelper.isEnableDebug()) {
+                        LogUtil.d(TAG, "cannot get data from queue");
+                    }
                 }
 
                 synchronized (mSendDataQueue) {
                     if (mSendDataQueue.size() == 0) {
-                        try {
-                            mSendDataQueue.wait();
-                        } catch (InterruptedException e) {
+                        mSendDataThread = null;
+                        if (BluetoothAccessHelper.isEnableDebug()) {
+                            LogUtil.d(TAG, "mClientRunnable is finished by no data");
                         }
+                        break;
                     }
                 }
             }
-
-            mSendDataThread = null;
         }
     };
 
