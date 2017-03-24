@@ -14,7 +14,6 @@ import android.os.Handler;
 import android.os.Message;
 import android.support.v4.content.LocalBroadcastManager;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -72,7 +71,7 @@ public class BluetoothAccessHelper {
     private static long sStopDiscoverTimeMS = 0;
     private static boolean sDebug = false;
 
-    private static final String TAG = "BluetoothAccessHelper";
+    private static final String TAG = BluetoothAccessHelper.class.getSimpleName();
     private static final String LaunchBluetooth = "LaunchBluetooth";
     private static final int LaunchBluetoothInt = LaunchBluetooth.hashCode() & 0x0000FFFF;
     private static final int StopDiscover = "StopDiscover".hashCode();
@@ -403,6 +402,11 @@ public class BluetoothAccessHelper {
                 BluetoothSocket connectedSocket = connectedSocketMap.remove(targetUuid);
                 if (connectedSocket != null) {
                     try {
+                        BufferedByteReader.releaseStoredByteBuffer(connectedSocket.getInputStream());
+                    } catch (IOException e) {
+                    }
+
+                    try {
                         connectedSocket.close();
                     } catch (Exception e) {
                     }
@@ -427,6 +431,8 @@ public class BluetoothAccessHelper {
             }
             mConnectedSocketMap.clear();
         }
+
+        BufferedByteReader.releaseAllStoredByteBuffer();
     }
 
     public boolean sendData(String uuidText, BluetoothDevice device, byte[] data) {
@@ -471,6 +477,9 @@ public class BluetoothAccessHelper {
     }
 
     public int readData(BluetoothDevice device, UUID uuid, byte[] readBuffer) {
+        if (BluetoothAccessHelper.isEnableDebug()) {
+            LogUtil.d(TAG, "readData: request receive data: " + device);
+        }
         int ret = -1;
 
         BluetoothSocket socket = getServerSocket(device, uuid);
@@ -486,6 +495,9 @@ public class BluetoothAccessHelper {
             if (stream != null) {
                 try {
                     ret = stream.read(readBuffer);
+                    if (BluetoothAccessHelper.isEnableDebug()) {
+                        LogUtil.d(TAG, "receive data: " + Arrays.toString(readBuffer));
+                    }
                 } catch (IOException e) {
                     LogUtil.exception(TAG, e);
                 }
@@ -496,10 +508,12 @@ public class BluetoothAccessHelper {
     }
 
     public byte[] readLine(BluetoothDevice device, UUID uuid, byte[] delimiter) {
+        if (BluetoothAccessHelper.isEnableDebug()) {
+            LogUtil.d(TAG, "readLine: request receive data: " + device);
+        }
         BluetoothSocket socket = getServerSocket(device, uuid);
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        byte[] ret = null;
         int delimiterSize = delimiter.length;
-        boolean needRemoveDelimiter = false;
 
         if (socket != null) {
             InputStream stream = null;
@@ -510,38 +524,23 @@ public class BluetoothAccessHelper {
             }
 
             if (stream != null) {
-                byte[] tempBuffer = new byte[delimiterSize];
-                byte[] readBuffer = new byte[1];
+                BufferedByteReader reader = new BufferedByteReader(stream);
 
-                while (true) {
-                    try {
-                        if (stream.read(readBuffer) == 1) {
-                            outputStream.write(readBuffer[0]);
-                        } else {
-                            break;
-                        }
-
-                        byte[] tempOutput = outputStream.toByteArray();
-                        if (tempOutput.length >= delimiterSize) {
-                            for (int i = 0; i < delimiterSize; i++) {
-                                tempBuffer[i] = tempOutput[tempOutput.length - delimiterSize + i];
-                            }
-                        }
-
-                        if (Arrays.equals(tempBuffer, delimiter)) {
-                            // stop read for reach delimiter data
-                            needRemoveDelimiter = true;
-                            break;
-                        }
-                    } catch (IOException e) {
-                        LogUtil.exception(TAG, e);
-                        break;
-                    }
+                try {
+                    ret = reader.readLine(delimiter);
+                } catch (IOException e) {
+                    LogUtil.exception(TAG, e);
+                } finally {
+                    // クローズするとバッファリングされているデータも解放されてしまうので、クローズしない
+                    // disconnect時に解放
+                }
+                if (BluetoothAccessHelper.isEnableDebug()) {
+                    LogUtil.d(TAG, "receive data from " + stream);
                 }
             }
         }
 
-        return needRemoveDelimiter ? Arrays.copyOf(outputStream.toByteArray(), outputStream.size() - delimiterSize) : outputStream.toByteArray();
+        return ret;
     }
 
     private boolean createBond(DataBox dataBox) {
@@ -683,7 +682,10 @@ public class BluetoothAccessHelper {
                             connectedSocketMap.put(dataBox.mTargetUUID, clientSocket);
                         }
 
-                        LogUtil.d(TAG, "connection established");
+                        if (isEnableDebug()) {
+                            LogUtil.v(TAG, "connection established");
+                        }
+                        lastException = null;
                         break;
                     } catch (IOException e) {
                         lastException = e;
@@ -697,7 +699,9 @@ public class BluetoothAccessHelper {
                     LogUtil.e(TAG, lastException.getLocalizedMessage());
                 }
             } else {
-                LogUtil.d(TAG, "reuse connection");
+                if (isEnableDebug()) {
+                    LogUtil.v(TAG, "reuse connection");
+                }
             }
         } catch (Exception e) {
             LogUtil.e(TAG, e.getLocalizedMessage());
