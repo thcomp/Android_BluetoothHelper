@@ -107,13 +107,16 @@ class BufferedByteReader extends InputStream {
                         }
                         break;
                     } else {
-                        delimiterPosition = findDelimiter(readBuffer, readSize, lineDelimiter);
+                        outStream.write(readBuffer, 0, readSize);
+
+                        byte[] tempBuffer = outStream.toByteArray();
+                        delimiterPosition = findDelimiter(tempBuffer, tempBuffer.length, lineDelimiter);
                         if (delimiterPosition >= 0) {
-                            outStream.write(readBuffer, 0, delimiterPosition);
+                            ret = Arrays.copyOfRange(tempBuffer, 0, delimiterPosition);
 
                             // delimiterを削除し、その後ろに未だデータがあれば、保持
-                            if (delimiterPosition + lineDelimiter.length < readSize) {
-                                storedBuffer = Arrays.copyOfRange(readBuffer, delimiterPosition + lineDelimiter.length, readSize);
+                            if (delimiterPosition + lineDelimiter.length < tempBuffer.length) {
+                                storedBuffer = Arrays.copyOfRange(tempBuffer, delimiterPosition + lineDelimiter.length, tempBuffer.length);
                                 sStoredByteBufferMap.put(mInputStream, storedBuffer);
                             }
                             if (BluetoothAccessHelper.isEnableDebug()) {
@@ -121,12 +124,10 @@ class BufferedByteReader extends InputStream {
                             }
                             break;
                         } else {
-                            outStream.write(readBuffer, 0, readSize);
+                            sStoredByteBufferMap.put(mInputStream, tempBuffer);
                         }
                     }
                 }
-
-                ret = outStream.toByteArray();
             }
 
             return ret;
