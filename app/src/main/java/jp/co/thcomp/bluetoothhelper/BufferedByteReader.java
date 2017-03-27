@@ -118,6 +118,8 @@ class BufferedByteReader extends InputStream {
                             if (delimiterPosition + lineDelimiter.length < tempBuffer.length) {
                                 storedBuffer = Arrays.copyOfRange(tempBuffer, delimiterPosition + lineDelimiter.length, tempBuffer.length);
                                 sStoredByteBufferMap.put(mInputStream, storedBuffer);
+                            } else {
+                                sStoredByteBufferMap.remove(mInputStream);
                             }
                             if (BluetoothAccessHelper.isEnableDebug()) {
                                 LogUtil.d(BluetoothAccessHelper.class.getSimpleName(), "readLine finish 2");
