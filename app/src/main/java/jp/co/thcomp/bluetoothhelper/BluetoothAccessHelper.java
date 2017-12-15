@@ -74,6 +74,8 @@ public class BluetoothAccessHelper {
     private static final String TAG = BluetoothAccessHelper.class.getSimpleName();
     private static final String LaunchBluetooth = "LaunchBluetooth";
     private static final int LaunchBluetoothInt = LaunchBluetooth.hashCode() & 0x0000FFFF;
+    private static final String DiscoverableOwnDevice = "DiscoverableOwnDevice";
+    private static final int DiscoverableOwnDeviceInt = DiscoverableOwnDevice.hashCode() & 0x0000FFFF;
     private static final int StopDiscover = "StopDiscover".hashCode();
     private static final int MaxConnectionRetryCount = 3;
     private static final int ConnectionRetryIntervalMS = 1000;
@@ -272,6 +274,7 @@ public class BluetoothAccessHelper {
             if (!mStartHelper) {
                 mStartHelper = true;
                 LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(LaunchBluetooth));
+                LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(DiscoverableOwnDevice));
 
                 if (sAdapter.isEnabled()) {
                     addBluetoothAccessHelper(this);
@@ -304,11 +307,28 @@ public class BluetoothAccessHelper {
     }
 
     public void requestDiscoverable() {
+        requestDiscoverable(0);
+    }
+
+    public void requestDiscoverable(int duration) {
         if (sScanMode != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE) {
             Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-            intent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
-            mContext.startActivity(intent);
+            intent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, duration);
+
+            Intent launchIntent = new Intent();
+            launchIntent.setClass(mContext, HandleResultActivity.class);
+            launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            launchIntent.putExtra(HandleResultActivity.INTENT_PARCELABLE_EXTRA_TRANSFER_INTENT, intent);
+            launchIntent.putExtra(HandleResultActivity.INTENT_INT_EXTRA_HOWTO_CALLBACK, HandleResultActivity.CALLBACK_BY_LOCAL_BROADCAST);
+            launchIntent.putExtra(HandleResultActivity.INTENT_STRING_EXTRA_CALLBACK_ACTION, DiscoverableOwnDevice);
+            launchIntent.putExtra(HandleResultActivity.INTENT_INT_EXTRA_REQUEST_CODE, DiscoverableOwnDeviceInt);
+
+            mContext.startActivity(launchIntent);
         }
+    }
+
+    public void requestUndiscoverable() {
+        requestDiscoverable(5);
     }
 
     public Set<BluetoothDevice> getPairedDevices() {
@@ -901,6 +921,8 @@ public class BluetoothAccessHelper {
                 }
 
                 changeStatus(StatusStartBluetooth, null);
+            } else if (DiscoverableOwnDevice.equals(action)) {
+                // 処理なし
             }
         }
     };
