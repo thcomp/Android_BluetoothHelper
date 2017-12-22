@@ -15,12 +15,16 @@ import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
 import android.os.Build;
+import android.os.ParcelUuid;
 
 import java.util.HashMap;
 import java.util.UUID;
 
+import jp.co.thcomp.util.LogUtil;
+
 @TargetApi(Build.VERSION_CODES.LOLLIPOP)
 public class BlePeripheral {
+    private static final String TAG = BlePeripheral.class.getSimpleName();
     public static final int StatusDisableBluetooth = BluetoothAccessHelper.StatusDisableBluetooth;
     public static final int StatusNoSupportBluetooth = BluetoothAccessHelper.StatusNoSupportBluetooth;
     public static final int StatusInit = BluetoothAccessHelper.StatusInit;
@@ -86,6 +90,7 @@ public class BlePeripheral {
     private OnBluetoothStatusListener mBluetoothStatusListener;
     private AdvertiseMode mAdvertiseMode = AdvertiseMode.Balanced;
     private boolean mConnectable = false;
+    private ParcelUuid mRootServiceUuid;
     private AdvertiseTxPower mAdvertiseTxPower = AdvertiseTxPower.Medium;
     private BluetoothGattServer mGattServer;
     private HashMap<BluetoothDevice, BleTransferSettings> mTransferSettingMap = new HashMap<>();
@@ -107,9 +112,19 @@ public class BlePeripheral {
         }
     }
 
+    public void setRootServiceUuid(ParcelUuid serviceUuid) {
+        mRootServiceUuid = serviceUuid;
+    }
+
     public void setAdvertiseMode(AdvertiseMode mode) {
         if (mode != null) {
             mAdvertiseMode = mode;
+        }
+    }
+
+    public void setAdvertiseTxPower(AdvertiseTxPower txPower) {
+        if (txPower != null) {
+            mAdvertiseTxPower = txPower;
         }
     }
 
@@ -131,6 +146,14 @@ public class BlePeripheral {
             mBtHelper.stopBluetoothHelper();
             mPeripheralState &= (~PeripheralStateStart);
         }
+    }
+
+    public boolean setDeviceName(String deviceName) {
+        return mBtHelper.setDeviceName(deviceName);
+    }
+
+    public boolean restoreDeviceName() {
+        return mBtHelper.restoreDeviceName();
     }
 
     public boolean setCharacteristic(UUID serviceUuid, int properties, int permissions, byte[] data) {
@@ -184,7 +207,19 @@ public class BlePeripheral {
                 settingsBuilder.setTxPowerLevel(mAdvertiseTxPower.getValue());
 
                 AdvertiseData.Builder dataBuilder = new AdvertiseData.Builder();
-                advertiser.startAdvertising(settingsBuilder.build(), dataBuilder.build(), mAdvertiseCallback);
+                if (mRootServiceUuid != null) {
+                    // UUIDが設定されているときは名前を設定するとデータ超過となるので、名前設定は行わない
+                    dataBuilder.setIncludeDeviceName(false);
+                    dataBuilder.addServiceUuid(mRootServiceUuid);
+                    dataBuilder.addServiceData(mRootServiceUuid, "data".getBytes());
+                } else {
+                    // UUIDが設定されていないときは名前を含める
+                    dataBuilder.setIncludeDeviceName(true);
+                }
+
+                AdvertiseSettings settings = settingsBuilder.build();
+                AdvertiseData data = dataBuilder.build();
+                advertiser.startAdvertising(settings, data, mAdvertiseCallback);
                 mPeripheralState |= PeripheralStateAdvertiserStart;
             }
         }
@@ -243,6 +278,9 @@ public class BlePeripheral {
                             listener.onStatusChange(status, scanMode);
                         }
 
+                        // GATTサーバオープン
+                        openGattServer();
+
                         // advertiseを開始
                         startBleAdvertising();
                         break;
@@ -256,6 +294,7 @@ public class BlePeripheral {
     private AdvertiseCallback mAdvertiseCallback = new AdvertiseCallback() {
         @Override
         public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+            LogUtil.i(TAG, "success to start advertise");
             super.onStartSuccess(settingsInEffect);
             OnBluetoothStatusListener listener = mBluetoothStatusListener;
 
@@ -269,6 +308,7 @@ public class BlePeripheral {
 
         @Override
         public void onStartFailure(int errorCode) {
+            LogUtil.i(TAG, "fail to start advertise: " + errorCode);
             super.onStartFailure(errorCode);
             OnBluetoothStatusListener listener = mBluetoothStatusListener;
 

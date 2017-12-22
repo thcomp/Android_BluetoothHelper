@@ -70,6 +70,14 @@ public class DeviceDiscoverer {
         if ((ret = mBtHelper.startDiscoverDevices())) {
             long timeoutTimeMS = System.currentTimeMillis() + durationMS;
 
+            if (durationMS == 0) {
+                // durationが指定されたときは無制限待ち
+                timeoutTimeMS = Long.MAX_VALUE;
+                durationMS = Long.MAX_VALUE;
+            } else {
+                timeoutTimeMS += durationMS;
+            }
+
             synchronized (mTimeoutTimeMap) {
                 if (mTimeoutTimeMap.size() == 0) {
                     LogUtil.d(TAG, "register broadcast receiver");
@@ -133,11 +141,15 @@ public class DeviceDiscoverer {
         if ((ret = mBtHelper.startDiscoverLeDevices(mFoundLeDeviceListener))) {
             long timeoutTimeMS = System.currentTimeMillis() + durationMS;
 
+            if (durationMS == 0) {
+                // durationが指定されたときは無制限待ち
+                timeoutTimeMS = Long.MAX_VALUE;
+                durationMS = Long.MAX_VALUE;
+            } else {
+                timeoutTimeMS += durationMS;
+            }
+
             synchronized (mLeTimeoutTimeMap) {
-                if (mLeTimeoutTimeMap.size() == 0) {
-
-                }
-
                 ArrayList<OnFoundLeDeviceListener> listenerList = mLeTimeoutTimeMap.get(timeoutTimeMS);
 
                 if (listenerList == null) {
