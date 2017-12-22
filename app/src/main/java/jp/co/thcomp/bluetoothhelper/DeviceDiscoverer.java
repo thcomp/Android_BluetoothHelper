@@ -1,9 +1,6 @@
 package jp.co.thcomp.bluetoothhelper;
 
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanResult;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -13,7 +10,6 @@ import android.os.Message;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import jp.co.thcomp.util.LogUtil;
@@ -134,7 +130,7 @@ public class DeviceDiscoverer {
         LogUtil.d(TAG, "startDiscoverDevices(S)");
 
         boolean ret = false;
-        if ((ret = mBtHelper.startDiscoverDevices())) {
+        if ((ret = mBtHelper.startDiscoverLeDevices(mFoundLeDeviceListener))) {
             long timeoutTimeMS = System.currentTimeMillis() + durationMS;
 
             synchronized (mLeTimeoutTimeMap) {
@@ -240,6 +236,51 @@ public class DeviceDiscoverer {
                         }
                     }
                 }
+            } else if (message.what == MsgNotifyLeTimeout) {
+                LogUtil.d(TAG, "handle MsgNotifyLeTimeout");
+                Long timeoutTimeMS = message.obj instanceof Long ? (Long) message.obj : null;
+
+                if (timeoutTimeMS != null) {
+                    synchronized (mLeTimeoutTimeMap) {
+                        if (mLeTimeoutTimeMap.size() > 0) {
+                            for (Long reservedTimeoutTimeMS : mLeTimeoutTimeMap.keySet().toArray(new Long[0])) {
+                                if (reservedTimeoutTimeMS < timeoutTimeMS) {
+                                    ArrayList<OnFoundLeDeviceListener> listenerList = mLeTimeoutTimeMap.remove(reservedTimeoutTimeMS);
+                                    if (listenerList != null && listenerList.size() > 0) {
+                                        for (OnFoundLeDeviceListener listener : listenerList) {
+                                            listener.onTimeoutFindLeDevice();
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (mLeTimeoutTimeMap.size() == 0) {
+                                LogUtil.d(TAG, "stop discover BLE device");
+                                mBtHelper.stopDiscoverLeDevices();
+                            }
+                        }
+                    }
+                }
+            } else if (message.what == MsgFindLeDevice) {
+                LogUtil.d(TAG, "handle MsgFindLeDevice");
+                BluetoothDevice device = (BluetoothDevice) message.obj;
+
+                synchronized (mTimeoutTimeMap) {
+                    if (mTimeoutTimeMap.size() > 0) {
+                        ArrayList<Long> removeList = new ArrayList<>();
+
+                        for (Map.Entry<Long, ArrayList<OnFoundLeDeviceListener>> entrySet : mLeTimeoutTimeMap.entrySet()) {
+                            ArrayList<OnFoundLeDeviceListener> listenerList = entrySet.getValue();
+                            if (listenerList.size() > 0) {
+                                for (OnFoundLeDeviceListener listener : listenerList) {
+                                    listener.onFoundLeDevice(device);
+                                }
+                            } else {
+                                removeList.add(entrySet.getKey());
+                            }
+                        }
+                    }
+                }
             }
 
             return true;
@@ -263,27 +304,11 @@ public class DeviceDiscoverer {
         }
     };
 
-    private BluetoothAdapter.LeScanCallback mLeScanCallback = new BluetoothAdapter.LeScanCallback() {
+    private BluetoothAccessHelper.OnFoundLeDeviceListener mFoundLeDeviceListener = new BluetoothAccessHelper.OnFoundLeDeviceListener() {
         @Override
-        public void onLeScan(BluetoothDevice bluetoothDevice, int i, byte[] bytes) {
-
-        }
-    };
-
-    private ScanCallback mLeScanCallback2 = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            super.onScanResult(callbackType, result);
-        }
-
-        @Override
-        public void onBatchScanResults(List<ScanResult> results) {
-            super.onBatchScanResults(results);
-        }
-
-        @Override
-        public void onScanFailed(int errorCode) {
-            super.onScanFailed(errorCode);
+        public void onFoundLeDevice(BluetoothDevice device) {
+            mFoundLeDeviceList.add(device);
+            mMainLooperHandler.sendMessage(Message.obtain(mMainLooperHandler, MsgFindLeDevice, device));
         }
     };
 }
