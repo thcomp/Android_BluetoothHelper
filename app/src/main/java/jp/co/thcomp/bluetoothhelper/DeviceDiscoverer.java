@@ -40,7 +40,7 @@ public class DeviceDiscoverer {
     }
 
     public interface OnFoundLeDeviceListener {
-        void onFoundLeDevice(BluetoothDevice device);
+        void onFoundLeDevice(FoundLeDevice device);
 
         void onTimeoutFindLeDevice();
     }
@@ -49,7 +49,6 @@ public class DeviceDiscoverer {
     private BluetoothAccessHelper mBtHelper;
     private ArrayList<BluetoothDevice> mFoundDeviceList = new ArrayList<BluetoothDevice>();
     private HashMap<Long, ArrayList<OnFoundDeviceListener>> mTimeoutTimeMap = new HashMap<Long, ArrayList<OnFoundDeviceListener>>();
-    private ArrayList<BluetoothDevice> mFoundLeDeviceList = new ArrayList<BluetoothDevice>();
     private HashMap<Long, ArrayList<OnFoundLeDeviceListener>> mLeTimeoutTimeMap = new HashMap<Long, ArrayList<OnFoundLeDeviceListener>>();
     private Handler mMainLooperHandler;
 
@@ -69,6 +68,14 @@ public class DeviceDiscoverer {
         boolean ret = false;
         if ((ret = mBtHelper.startDiscoverDevices())) {
             long timeoutTimeMS = System.currentTimeMillis() + durationMS;
+
+            if (durationMS == 0) {
+                // durationが指定されたときは無制限待ち
+                timeoutTimeMS = Long.MAX_VALUE;
+                durationMS = Long.MAX_VALUE;
+            } else {
+                timeoutTimeMS += durationMS;
+            }
 
             synchronized (mTimeoutTimeMap) {
                 if (mTimeoutTimeMap.size() == 0) {
@@ -133,11 +140,15 @@ public class DeviceDiscoverer {
         if ((ret = mBtHelper.startDiscoverLeDevices(mFoundLeDeviceListener))) {
             long timeoutTimeMS = System.currentTimeMillis() + durationMS;
 
+            if (durationMS == 0) {
+                // durationが指定されたときは無制限待ち
+                timeoutTimeMS = Long.MAX_VALUE;
+                durationMS = Long.MAX_VALUE;
+            } else {
+                timeoutTimeMS += durationMS;
+            }
+
             synchronized (mLeTimeoutTimeMap) {
-                if (mLeTimeoutTimeMap.size() == 0) {
-
-                }
-
                 ArrayList<OnFoundLeDeviceListener> listenerList = mLeTimeoutTimeMap.get(timeoutTimeMS);
 
                 if (listenerList == null) {
@@ -262,11 +273,11 @@ public class DeviceDiscoverer {
                     }
                 }
             } else if (message.what == MsgFindLeDevice) {
-                LogUtil.d(TAG, "handle MsgFindLeDevice");
-                BluetoothDevice device = (BluetoothDevice) message.obj;
+                LogUtil.v(TAG, "handle MsgFindLeDevice");
+                FoundLeDevice device = (FoundLeDevice) message.obj;
 
-                synchronized (mTimeoutTimeMap) {
-                    if (mTimeoutTimeMap.size() > 0) {
+                synchronized (mLeTimeoutTimeMap) {
+                    if (mLeTimeoutTimeMap.size() > 0) {
                         ArrayList<Long> removeList = new ArrayList<>();
 
                         for (Map.Entry<Long, ArrayList<OnFoundLeDeviceListener>> entrySet : mLeTimeoutTimeMap.entrySet()) {
@@ -306,8 +317,7 @@ public class DeviceDiscoverer {
 
     private BluetoothAccessHelper.OnFoundLeDeviceListener mFoundLeDeviceListener = new BluetoothAccessHelper.OnFoundLeDeviceListener() {
         @Override
-        public void onFoundLeDevice(BluetoothDevice device) {
-            mFoundLeDeviceList.add(device);
+        public void onFoundLeDevice(FoundLeDevice device) {
             mMainLooperHandler.sendMessage(Message.obtain(mMainLooperHandler, MsgFindLeDevice, device));
         }
     };
