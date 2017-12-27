@@ -2,6 +2,7 @@ package jp.co.thcomp.bluetoothhelper;
 
 import android.annotation.TargetApi;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattServer;
@@ -17,7 +18,9 @@ import android.content.Context;
 import android.os.Build;
 import android.os.ParcelUuid;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.UUID;
 
 import jp.co.thcomp.util.LogUtil;
@@ -84,16 +87,18 @@ public class BlePeripheral {
     private static final int PeripheralStateAdvertiserStart = 2;
     private static final int PeripheralStateOpenGattServer = 4;
 
+    private static final int MaxServiceDataByteSize = 24;
+    private static final int MaxManufactureSpecifiedDataByteSize = 24;
+
     private Context mContext;
     private BluetoothAccessHelper mBtHelper;
     private int mPeripheralState = PeripheralStateInit;
     private OnBluetoothStatusListener mBluetoothStatusListener;
-    private AdvertiseMode mAdvertiseMode = AdvertiseMode.Balanced;
-    private boolean mConnectable = false;
-    private ParcelUuid mRootServiceUuid;
-    private AdvertiseTxPower mAdvertiseTxPower = AdvertiseTxPower.Medium;
+    private AdvertiseSettings.Builder mSettingsBuilder = new AdvertiseSettings.Builder();
+    private AdvertiseData.Builder mDataBuilder = new AdvertiseData.Builder();
     private BluetoothGattServer mGattServer;
     private HashMap<BluetoothDevice, BleTransferSettings> mTransferSettingMap = new HashMap<>();
+    private HashMap<UUID, byte[]> mCharacteristicMap = new HashMap<>();
 
     public BlePeripheral(Context context) {
         mContext = context;
@@ -112,24 +117,38 @@ public class BlePeripheral {
         }
     }
 
-    public void setRootServiceUuid(ParcelUuid serviceUuid) {
-        mRootServiceUuid = serviceUuid;
+    public void addRootServiceUuid(ParcelUuid serviceUuid) {
+        mDataBuilder.addServiceUuid(serviceUuid);
+    }
+
+    public void addRootServiceUuidAndData(ParcelUuid serviceUuid, byte[] serviceData) {
+        if (serviceData != null && serviceData.length > MaxServiceDataByteSize) {
+            throw new IllegalArgumentException("service data is larger than " + MaxServiceDataByteSize);
+        }
+        mDataBuilder.addServiceData(serviceUuid, serviceData);
     }
 
     public void setAdvertiseMode(AdvertiseMode mode) {
         if (mode != null) {
-            mAdvertiseMode = mode;
+            mSettingsBuilder.setAdvertiseMode(mode.getValue());
         }
     }
 
     public void setAdvertiseTxPower(AdvertiseTxPower txPower) {
         if (txPower != null) {
-            mAdvertiseTxPower = txPower;
+            mSettingsBuilder.setTxPowerLevel(txPower.getValue());
         }
     }
 
     public void setConnectable(boolean connectable) {
-        mConnectable = connectable;
+        mSettingsBuilder.setConnectable(connectable);
+    }
+
+    public void addManufacturerData(int manufacturerId, byte[] data) {
+        if (data != null && data.length > MaxManufactureSpecifiedDataByteSize) {
+            throw new IllegalArgumentException("manufacturer data is larger than " + MaxManufactureSpecifiedDataByteSize);
+        }
+        mDataBuilder.addManufacturerData(manufacturerId, data);
     }
 
     public void start() {
@@ -157,25 +176,54 @@ public class BlePeripheral {
     }
 
     public boolean setCharacteristic(UUID serviceUuid, int properties, int permissions, byte[] data) {
+        // advertiseを開始
+        startBleAdvertising();
+
         BluetoothGattService service = mGattServer.getService(serviceUuid);
+        GattServiceType serviceType = GattServiceType.Primary;
 
         if (service != null) {
+            for (GattServiceType tempServiceType : GattServiceType.values()) {
+                if (tempServiceType.getValue() == service.getType()) {
+                    serviceType = tempServiceType;
+                    break;
+                }
+            }
+
             // データ更新のため一旦サービスを削除
             mGattServer.removeService(service);
         }
-        service = new BluetoothGattService(serviceUuid, GattServiceType.Primary.getValue());
+        service = new BluetoothGattService(serviceUuid, serviceType.getValue());
 
         BleSendDataProvider dataProvider = new BleSendDataProvider(data);
         byte[] buffer = null;
         int minMTU = getMinimumMTU();
 
+        List<BluetoothDevice> connectedDeviceList = ((BluetoothManager) mContext.getSystemService(Context.BLUETOOTH_SERVICE)).getConnectedDevices(BluetoothProfile.GATT);
         for (int packetIndex = 0; (buffer = dataProvider.getPacket(minMTU, packetIndex)) != null; packetIndex++) {
-            BluetoothGattCharacteristic characteristic = new BluetoothGattCharacteristic(UUID.randomUUID(), properties, permissions);
+            //UUID characteristicUuid = UUID.fromString(String.format("636d791c-7f9a-4547-9290-%012X", packetIndex));
+            UUID characteristicUuid = UUID.randomUUID();
+            BluetoothGattCharacteristic characteristic = new BluetoothGattCharacteristic(characteristicUuid, properties, permissions);
             characteristic.setValue(buffer);
             service.addCharacteristic(characteristic);
+
+            LogUtil.d(TAG, "UUID: " + characteristicUuid + ", buffer: " + Arrays.toString(buffer));
+            mCharacteristicMap.put(characteristicUuid, buffer);
+
+            for (BluetoothDevice connectedDevice : connectedDeviceList) {
+                mGattServer.notifyCharacteristicChanged(connectedDevice, characteristic, true);
+            }
         }
 
         return mGattServer.addService(service);
+    }
+
+    public void removeService(UUID serviceUuid) {
+        BluetoothGattService service = mGattServer.getService(serviceUuid);
+
+        if (service != null) {
+            mGattServer.removeService(service);
+        }
     }
 
     private int getMinimumMTU() {
@@ -197,35 +245,19 @@ public class BlePeripheral {
         return ret;
     }
 
-    private void startBleAdvertising() {
+    public void startBleAdvertising() {
         if ((mPeripheralState & PeripheralStateStart) != PeripheralStateAdvertiserStart) {
             BluetoothLeAdvertiser advertiser = mBtHelper.getBleAdvertiser();
             if (advertiser != null) {
-                AdvertiseSettings.Builder settingsBuilder = new AdvertiseSettings.Builder();
-                settingsBuilder.setAdvertiseMode(mAdvertiseMode.getValue());
-                settingsBuilder.setConnectable(mConnectable);
-                settingsBuilder.setTxPowerLevel(mAdvertiseTxPower.getValue());
-
-                AdvertiseData.Builder dataBuilder = new AdvertiseData.Builder();
-                if (mRootServiceUuid != null) {
-                    // UUIDが設定されているときは名前を設定するとデータ超過となるので、名前設定は行わない
-                    dataBuilder.setIncludeDeviceName(false);
-                    dataBuilder.addServiceUuid(mRootServiceUuid);
-                    dataBuilder.addServiceData(mRootServiceUuid, "data".getBytes());
-                } else {
-                    // UUIDが設定されていないときは名前を含める
-                    dataBuilder.setIncludeDeviceName(true);
-                }
-
-                AdvertiseSettings settings = settingsBuilder.build();
-                AdvertiseData data = dataBuilder.build();
+                AdvertiseSettings settings = mSettingsBuilder.build();
+                AdvertiseData data = mDataBuilder.build();
                 advertiser.startAdvertising(settings, data, mAdvertiseCallback);
                 mPeripheralState |= PeripheralStateAdvertiserStart;
             }
         }
     }
 
-    private void stopBleAdvertising() {
+    public void stopBleAdvertising() {
         if ((mPeripheralState & PeripheralStateAdvertiserStart) == PeripheralStateAdvertiserStart) {
             BluetoothLeAdvertiser advertiser = mBtHelper.getBleAdvertiser();
             if (advertiser != null) {
@@ -281,8 +313,8 @@ public class BlePeripheral {
                         // GATTサーバオープン
                         openGattServer();
 
-                        // advertiseを開始
-                        startBleAdvertising();
+                        //test // advertiseを開始
+                        //startBleAdvertising();
                         break;
                     default:
                         break;
@@ -298,8 +330,8 @@ public class BlePeripheral {
             super.onStartSuccess(settingsInEffect);
             OnBluetoothStatusListener listener = mBluetoothStatusListener;
 
-            // GATTサーバオープン
-            openGattServer();
+            //test // GATTサーバオープン
+            //openGattServer();
 
             if (listener != null) {
                 listener.onStatusChange(StatusStartBleAdvertising, BluetoothAccessHelper.sScanMode);
@@ -323,6 +355,7 @@ public class BlePeripheral {
         @Override
         public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
             super.onConnectionStateChange(device, status, newState);
+            LogUtil.d(TAG, "onConnectionStateChange");
 
             switch (newState) {
                 case BluetoothProfile.STATE_CONNECTED:
@@ -343,41 +376,55 @@ public class BlePeripheral {
         @Override
         public void onServiceAdded(int status, BluetoothGattService service) {
             super.onServiceAdded(status, service);
+            LogUtil.d(TAG, "onServiceAdded");
         }
 
         @Override
         public void onCharacteristicReadRequest(BluetoothDevice device, int requestId, int offset, BluetoothGattCharacteristic characteristic) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic);
+            LogUtil.d(TAG, "onCharacteristicReadRequest: " + characteristic.getUuid() + "requestId: " + requestId + ", offset: " + offset);
+
+            byte[] buffer = mCharacteristicMap.get(characteristic.getUuid());
+            if (buffer != null) {
+                mGattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, buffer);
+                mGattServer.notifyCharacteristicChanged(device, characteristic, true);
+            }
         }
 
         @Override
         public void onCharacteristicWriteRequest(BluetoothDevice device, int requestId, BluetoothGattCharacteristic characteristic, boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value);
+            LogUtil.d(TAG, "onCharacteristicWriteRequest");
         }
 
         @Override
         public void onDescriptorReadRequest(BluetoothDevice device, int requestId, int offset, BluetoothGattDescriptor descriptor) {
             super.onDescriptorReadRequest(device, requestId, offset, descriptor);
+            LogUtil.d(TAG, "onDescriptorReadRequest");
         }
 
         @Override
         public void onDescriptorWriteRequest(BluetoothDevice device, int requestId, BluetoothGattDescriptor descriptor, boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
             super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value);
+            LogUtil.d(TAG, "onDescriptorWriteRequest");
         }
 
         @Override
         public void onExecuteWrite(BluetoothDevice device, int requestId, boolean execute) {
             super.onExecuteWrite(device, requestId, execute);
+            LogUtil.d(TAG, "onExecuteWrite");
         }
 
         @Override
         public void onNotificationSent(BluetoothDevice device, int status) {
             super.onNotificationSent(device, status);
+            LogUtil.d(TAG, "onNotificationSent");
         }
 
         @Override
         public void onMtuChanged(BluetoothDevice device, int mtu) {
             super.onMtuChanged(device, mtu);
+            LogUtil.d(TAG, "onMtuChanged");
 
             synchronized (mTransferSettingMap) {
                 BleTransferSettings setting = mTransferSettingMap.get(device);

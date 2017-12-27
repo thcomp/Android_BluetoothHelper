@@ -1053,7 +1053,8 @@ public class BluetoothAccessHelper {
         public void onLeScan(BluetoothDevice bluetoothDevice, int i, byte[] bytes) {
             OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
             if (listener != null) {
-                listener.onFoundLeDevice(bluetoothDevice);
+                FoundLeDevice foundLeDevice = new FoundLeDevice(bluetoothDevice, i, bytes);
+                listener.onFoundLeDevice(foundLeDevice);
             }
         }
     };
@@ -1066,7 +1067,8 @@ public class BluetoothAccessHelper {
 
             OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
             if (listener != null) {
-                listener.onFoundLeDevice(result.getDevice());
+                FoundLeDevice foundLeDevice = new FoundLeDevice(result);
+                listener.onFoundLeDevice(foundLeDevice);
             }
         }
 
@@ -1078,7 +1080,8 @@ public class BluetoothAccessHelper {
             OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
             if (listener != null) {
                 for (ScanResult result : results) {
-                    listener.onFoundLeDevice(result.getDevice());
+                    FoundLeDevice foundLeDevice = new FoundLeDevice(result);
+                    listener.onFoundLeDevice(foundLeDevice);
                 }
             }
         }
@@ -1090,6 +1093,6 @@ public class BluetoothAccessHelper {
     };
 
     interface OnFoundLeDeviceListener {
-        public void onFoundLeDevice(BluetoothDevice device);
+        public void onFoundLeDevice(FoundLeDevice device);
     }
 }
