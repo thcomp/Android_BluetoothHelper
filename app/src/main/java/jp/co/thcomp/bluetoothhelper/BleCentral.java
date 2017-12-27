@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.os.ParcelUuid;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.UUID;
 
 import jp.co.thcomp.util.LogUtil;
+import jp.co.thcomp.util.ToastUtil;
 
 @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
 public class BleCentral {
@@ -117,6 +119,44 @@ public class BleCentral {
         return mFoundLeDeviceMap.values().toArray(new FoundLeDevice[0]);
     }
 
+    public void writeCharacteristic(BluetoothDevice device, UUID serviceUuid, UUID characteristicUuid, byte[] data) {
+        LogUtil.d(TAG, "writeCharacteristic(S): service uuid: " + serviceUuid + ", characteristic uuid: " + characteristicUuid);
+
+        connectPeripheral(device);
+        BluetoothGatt gatt = mConnectedGattMap.get(device);
+        if (gatt != null) {
+            BluetoothGattService service = gatt.getService(serviceUuid);
+            if (service == null) {
+                // 数秒待ってみよう
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                service = gatt.getService(serviceUuid);
+            }
+
+            if (service != null) {
+                BluetoothGattCharacteristic targetCharacteristic = service.getCharacteristic(characteristicUuid);
+                if (targetCharacteristic != null) {
+                    targetCharacteristic.setValue(data);
+                    if (gatt.writeCharacteristic(targetCharacteristic)) {
+                        ToastUtil.showToast(mContext, "success write characteristic data", Toast.LENGTH_LONG);
+                        LogUtil.d(TAG, "success write characteristic data: " + Arrays.toString(data));
+                    } else {
+                        LogUtil.d(TAG, "fail write characteristic data: " + Arrays.toString(data));
+                    }
+                } else {
+                    LogUtil.e(TAG, "not found characteristic: " + characteristicUuid);
+                }
+            } else {
+                LogUtil.e(TAG, "not found service: " + serviceUuid);
+            }
+        }
+
+        LogUtil.d(TAG, "writeCharacteristic(E):");
+    }
+
     public BluetoothGattCharacteristic[] readCharacteristics(BluetoothDevice device, UUID
             serviceUuid) {
         LogUtil.d(TAG, "readCharacteristics(S): service uuid: " + serviceUuid);
@@ -170,7 +210,8 @@ public class BleCentral {
         return tempRet.toArray(new BluetoothGattCharacteristic[0]);
     }
 
-    private BluetoothGattCharacteristic[] readCharacteristics(BluetoothGatt gatt, BluetoothGattService service) {
+    private BluetoothGattCharacteristic[] readCharacteristics(BluetoothGatt
+                                                                      gatt, BluetoothGattService service) {
         LogUtil.d(TAG, "readCharacteristics(S): service uuid: " + service.getUuid());
         ArrayList<BluetoothGattCharacteristic> tempRet = new ArrayList<>();
         List<BluetoothGattService> serviceList = service.getIncludedServices();
@@ -224,7 +265,6 @@ public class BleCentral {
 
     public void disconnectPeripheral(BluetoothDevice device) {
         LogUtil.d(TAG, "disconnectPeripheral(S)");
-        LogUtil.printStackTrace();
         synchronized (mConnectedGattMap) {
             BluetoothGatt gatt = mConnectedGattMap.remove(device);
             if (gatt != null) {
@@ -441,11 +481,15 @@ public class BleCentral {
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             super.onCharacteristicWrite(gatt, characteristic, status);
+            LogUtil.d(TAG, "onCharacteristicWrite(S): UUID: " + characteristic.getUuid() + ", value: " + Arrays.toString(characteristic.getValue()));
+            LogUtil.d(TAG, "onCharacteristicWrite(E)");
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             super.onCharacteristicChanged(gatt, characteristic);
+            LogUtil.d(TAG, "onCharacteristicChanged(S): UUID: " + characteristic.getUuid() + ", value: " + Arrays.toString(characteristic.getValue()));
+            LogUtil.d(TAG, "onCharacteristicChanged(E)");
         }
 
         @Override
