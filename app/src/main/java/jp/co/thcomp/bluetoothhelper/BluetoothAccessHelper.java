@@ -1067,7 +1067,7 @@ public class BluetoothAccessHelper {
 
             OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
             if (listener != null) {
-                FoundLeDevice foundLeDevice = new FoundLeDevice(result);
+                FoundLeDevice foundLeDevice = new FoundLeDevice(callbackType, result);
                 listener.onFoundLeDevice(foundLeDevice);
             }
         }
@@ -1076,14 +1076,14 @@ public class BluetoothAccessHelper {
         @Override
         public void onBatchScanResults(List<ScanResult> results) {
             super.onBatchScanResults(results);
-
-            OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
-            if (listener != null) {
-                for (ScanResult result : results) {
-                    FoundLeDevice foundLeDevice = new FoundLeDevice(result);
-                    listener.onFoundLeDevice(foundLeDevice);
-                }
-            }
+//
+//            OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
+//            if (listener != null) {
+//                for (ScanResult result : results) {
+//                    FoundLeDevice foundLeDevice = new FoundLeDevice(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result);
+//                    listener.onFoundLeDevice(foundLeDevice);
+//                }
+//            }
         }
 
         @Override
