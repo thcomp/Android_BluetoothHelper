@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">SampleBLE</string>
+    <string name="ble_work_mode">mode</string>
+    <string name="ble_peripheral">peripheral</string>
+    <string name="ble_central">central</string>
+    <string name="ble_work_switch">BLE start</string>
+    <string name="nosupport_bluetooth">no support bluetooth</string>
+    <string name="disable_bluetooth">disable bluetooth</string>
+    <string name="disable_ble_advertising">disable BLE advertising</string>
+    <string name="ble_device_name">name</string>
+    <string name="ble_device_address">address</string>
+    <string name="input_characteristic">input characteristic</string>
+    <string name="add">add</string>
+    <string name="update">update</string>
+    <string name="ble_characteristic">characteristic</string>
 </resources>

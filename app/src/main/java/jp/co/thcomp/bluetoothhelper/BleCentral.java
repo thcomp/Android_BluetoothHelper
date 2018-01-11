@@ -36,11 +36,10 @@ public class BleCentral {
     private BluetoothAccessHelper mBtHelper;
     private OnBluetoothStatusListener mBluetoothStatusListener;
     private OnFoundLeDeviceListener mFoundLeDeviceListener;
-    private OnDataReceiveListener mDataReceiveListener;
     private int mCentralState = CentralStateInit;
     private DeviceDiscoverer mDeviceDiscoverer;
     private HashMap<BluetoothDevice, OnServicesDiscoveredListener> mDiscoveringServiceDeviceMap = new HashMap<>();
-    private HashMap<BluetoothGattCharacteristic, List<OnCharacteristicReadListener>> mReadCharacteristicMap = new HashMap<>();
+    private HashMap<LocalCharacteristicInfo, List<OnCharacteristicReadListener>> mReadCharacteristicMap = new HashMap<>();
     private HashMap<BluetoothDevice, FoundLeDevice> mFoundLeDeviceMap = new HashMap<BluetoothDevice, FoundLeDevice>();
     private HashMap<BluetoothDevice, BluetoothGatt> mConnectedGattMap = new HashMap<>();
     private HashMap<BluetoothDevice, Long> mConnectionTimeoutMap = new HashMap<>();
@@ -68,10 +67,6 @@ public class BleCentral {
 
     public void setOnFoundLeDeviceListener(OnFoundLeDeviceListener listener) {
         mFoundLeDeviceListener = listener;
-    }
-
-    public void setOnDataReceiveListener(OnDataReceiveListener listener) {
-        mDataReceiveListener = listener;
     }
 
     public void start() {
@@ -275,9 +270,10 @@ public class BleCentral {
                 });
             } else {
                 List<OnCharacteristicReadListener> characteristicReadListenerList = mReadCharacteristicMap.get(characteristic);
+                LocalCharacteristicInfo localCharacteristicInfo = new LocalCharacteristicInfo(device, characteristic);
                 if (characteristicReadListenerList == null) {
                     characteristicReadListenerList = new ArrayList<>();
-                    mReadCharacteristicMap.put(characteristic, characteristicReadListenerList);
+                    mReadCharacteristicMap.put(localCharacteristicInfo, characteristicReadListenerList);
                 }
                 characteristicReadListenerList.add(listener);
 
@@ -495,14 +491,12 @@ public class BleCentral {
                     }
                 }
 
-                OnDataReceiveListener listener = mDataReceiveListener;
-                if (listener != null) {
-                    ReceiveCharacteristicData receiveData = new ReceiveCharacteristicData();
-                    receiveData.device = gatt.getDevice();
-                    receiveData.uuid = characteristic.getUuid();
-                    receiveData.data = characteristic.getValue();
-                    receiveData.dataSize = receiveData.data != null ? receiveData.data.length : 0;
-                    listener.onDataReceive(receiveData);
+                LocalCharacteristicInfo localCharacteristicInfo = new LocalCharacteristicInfo(gatt.getDevice(), characteristic);
+                List<OnCharacteristicReadListener> listenerList = mReadCharacteristicMap.remove(localCharacteristicInfo);
+                if (listenerList != null) {
+                    for (OnCharacteristicReadListener listener : listenerList) {
+                        listener.onCharacteristicRead(gatt, characteristic, BluetoothGatt.GATT_SUCCESS);
+                    }
                 }
 
                 // コネクションタイマー更新
@@ -561,6 +555,38 @@ public class BleCentral {
         public ConnectionInfo(BluetoothDevice device, long connectionTimeoutMS) {
             this.device = device;
             this.connectionTimeoutMS = connectionTimeoutMS;
+        }
+    }
+
+    private static class LocalCharacteristicInfo {
+        public BluetoothDevice device;
+        public BluetoothGattCharacteristic characteristic;
+
+        public LocalCharacteristicInfo(BluetoothDevice device, BluetoothGattCharacteristic characteristic) {
+            this.device = device;
+            this.characteristic = characteristic;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            boolean ret = false;
+
+            if (o != null && o instanceof LocalCharacteristicInfo) {
+                LocalCharacteristicInfo targetInfo = (LocalCharacteristicInfo) o;
+                ret = targetInfo.device.equals(device) && targetInfo.characteristic.equals(characteristic);
+            }
+
+            return ret;
+        }
+
+        @Override
+        public int hashCode() {
+            return device.hashCode() + characteristic.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return super.toString();
         }
     }
 

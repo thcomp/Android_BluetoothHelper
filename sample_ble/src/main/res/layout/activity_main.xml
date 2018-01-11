@@ -5,15 +5,88 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context="android.example.com.sampleble.MainActivity">
+    tools:context="jp.co.thcomp.ble_sample.MainActivity">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Hello World!"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintLeft_toLeftOf="parent"
-        app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintTop_toTopOf="parent"/>
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:weightSum="1.0"
+        android:orientation="vertical">
+
+        <android.support.v7.widget.SwitchCompat
+            android:id="@+id/swWorkMode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textOn="@string/ble_central"
+            android:textOff="@string/ble_peripheral"
+            android:text="@string/ble_work_mode"
+            app:showText="true"/>
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="8dp"/>
+
+        <android.support.v7.widget.SwitchCompat
+            android:id="@+id/swWorkSwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/ble_work_switch"/>
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="8dp"/>
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1.0">
+
+            <FrameLayout
+                android:id="@+id/flPeripheralArea"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:weightSum="1.0">
+
+                    <EditText
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.0"
+                        android:hint="@string/input_characteristic"/>
+
+                    <View
+                        android:layout_width="4dp"
+                        android:layout_height="1dp"/>
+
+                    <Button
+                        android:id="@+id/btnAddCharacteristic"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/add"/>
+                </LinearLayout>
+
+                <android.support.v7.widget.RecyclerView
+                    android:id="@+id/rvCharacteristicList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"/>
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/flCentralArea"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <ExpandableListView
+                    android:id="@+id/elvPeripheralList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"/>
+            </FrameLayout>
+        </FrameLayout>
+
+    </LinearLayout>
 
 </android.support.constraint.ConstraintLayout>
