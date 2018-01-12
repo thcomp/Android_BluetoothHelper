@@ -7,10 +7,19 @@
     <string name="nosupport_bluetooth">no support bluetooth</string>
     <string name="disable_bluetooth">disable bluetooth</string>
     <string name="disable_ble_advertising">disable BLE advertising</string>
-    <string name="ble_device_name">name</string>
-    <string name="ble_device_address">address</string>
+    <string name="type">type</string>
+    <string name="uuid">uuid</string>
+    <string name="name">name</string>
+    <string name="address">address</string>
+    <string name="primary">primary</string>
+    <string name="secondary">secondary</string>
     <string name="input_characteristic">input characteristic</string>
     <string name="add">add</string>
+    <string name="add_new_service">add new service</string>
+    <string name="add_new_characteristic">add new characteristic</string>
     <string name="update">update</string>
     <string name="ble_characteristic">characteristic</string>
+    <string name="notify_characteristic_changed">notify characteristic changed</string>
+    <string name="readonly">readonly</string>
+    <string name="writable">writable</string>
 </resources>

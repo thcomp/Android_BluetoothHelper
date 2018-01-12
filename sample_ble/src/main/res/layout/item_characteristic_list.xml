@@ -3,6 +3,7 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:orientation="horizontal"
     android:weightSum="1.0">
 
@@ -10,11 +11,41 @@
         android:id="@+id/etCharacteristic"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_weight="1.0"/>
+        android:layout_weight="1.0"
+        android:hint="@string/input_characteristic"
+        android:layout_gravity="bottom"/>
 
-    <Button
-        android:id="@+id/btnUpdateCharacteristic"
+    <LinearLayout
+        android:id="@+id/llUpdateCharacteristicArea"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="@string/update"/>
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnUpdateCharacteristic"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/update"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/llAddNewCharacteristicArea"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <android.support.v7.widget.SwitchCompat
+            android:id="@+id/swWritable"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textOn="@string/writable"
+            android:textOff="@string/readonly"
+            app:showText="true"/>
+
+        <Button
+            android:id="@+id/btnAddNewCharacteristic"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/add_new_characteristic"/>
+    </LinearLayout>
 </LinearLayout>

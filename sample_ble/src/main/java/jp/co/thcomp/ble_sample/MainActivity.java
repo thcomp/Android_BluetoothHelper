@@ -7,19 +7,24 @@ import android.bluetooth.BluetoothGattService;
 import android.database.DataSetObserver;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.SwitchCompat;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.CompoundButton;
+import android.widget.EditText;
 import android.widget.ExpandableListAdapter;
 import android.widget.ExpandableListView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import jp.co.thcomp.bluetoothhelper.BleCentral;
 import jp.co.thcomp.bluetoothhelper.BlePeripheral;
@@ -27,17 +32,20 @@ import jp.co.thcomp.bluetoothhelper.FoundLeDevice;
 import jp.co.thcomp.util.ToastUtil;
 
 public class MainActivity extends AppCompatActivity {
+    private static final int ViewTagCharacteristicList = "ViewTagCharacteristicList".hashCode();
     private static final boolean ModePeripheral = false;
     private static final boolean ModeCentral = true;
 
     private BlePeripheral mBlePeripheral;
     private BleCentral mBleCentral;
     private PeripheralListAdapter mPeripheralListAdapter;
-    private CharacteristicListAdapter mCharacteristicListAdapter;
+    private ServiceListAdapter mServiceListAdapter;
     private Map<BluetoothDevice, FoundLeDevice> mFoundLeDeviceMap = new HashMap<>();
     private Map<FoundLeDevice, List<BluetoothGattService>> mDeviceServiceMap = new HashMap<>();
+    private List<BluetoothGattService> mPeripheralServiceList = new ArrayList<>();
+    private Map<BluetoothGattCharacteristic, BluetoothGattService> mCharacteristicServiceMap = new HashMap<>();
     private ExpandableListView mPeripheralExListView;
-    private RecyclerView mCharacteristicRecyclerView;
+    private ExpandableListView mServiceExListView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,9 +76,9 @@ public class MainActivity extends AppCompatActivity {
         });
 
         mPeripheralListAdapter = new PeripheralListAdapter();
-        mCharacteristicListAdapter = new CharacteristicListAdapter();
-        (mCharacteristicRecyclerView = (RecyclerView) findViewById(R.id.rvCharacteristicList)).setAdapter(mCharacteristicListAdapter);
-        (mPeripheralExListView = (ExpandableListView) findViewById(R.id.elvPeripheralList)).setAdapter(mPeripheralListAdapter);
+        mServiceListAdapter = new ServiceListAdapter();
+        (mServiceExListView = findViewById(R.id.elvServiceList)).setAdapter(mServiceListAdapter);
+        (mPeripheralExListView = findViewById(R.id.elvPeripheralList)).setAdapter(mPeripheralListAdapter);
     }
 
     private void changeViewStatus(boolean startBle) {
@@ -195,21 +203,36 @@ public class MainActivity extends AppCompatActivity {
             mBlePeripheral.setOnServiceChangedListener(new BlePeripheral.OnServiceChangedListener() {
                 @Override
                 public boolean onPreCharacteristicChanged(BluetoothDevice device, int requestId, BluetoothGattCharacteristic characteristic, boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
-                    return false;
+                    boolean ret = false;
+
+                    if (mBlePeripheral != null) {
+                        BluetoothGattService service = mCharacteristicServiceMap.get(characteristic);
+                        if (service != null) {
+                            for (BluetoothGattCharacteristic tempCharacteristic : service.getCharacteristics()) {
+                                if (characteristic.getUuid().equals(tempCharacteristic.getUuid())) {
+                                    tempCharacteristic.setValue(value);
+                                    mServiceListAdapter.dataSetChange();
+                                    ret = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    return ret;
                 }
 
                 @Override
                 public void onCharacteristicChanged(BluetoothGattCharacteristic changedCharacteristic) {
-
+                    // 処理なし
                 }
             });
             mBlePeripheral.start();
         }
     }
 
-    private class PeripheralListAdapter implements ExpandableListAdapter {
-        private DataSetObserver mObserver;
-        private FoundLeDevice[] mFoundLeDeviceArray = new FoundLeDevice[0];
+    private abstract class LocalExpandableListAdapter implements ExpandableListAdapter {
+        protected DataSetObserver mObserver;
 
         @Override
         public void registerDataSetObserver(DataSetObserver dataSetObserver) {
@@ -225,33 +248,8 @@ public class MainActivity extends AppCompatActivity {
 
         public void dataSetChange() {
             if (mObserver != null) {
-                if (mBleCentral != null) {
-                    mFoundLeDeviceArray = mBleCentral.getFoundLeDeviceList();
-                } else {
-                    mFoundLeDeviceArray = new FoundLeDevice[0];
-                }
                 mObserver.onChanged();
             }
-        }
-
-        @Override
-        public int getGroupCount() {
-            return mFoundLeDeviceArray.length;
-        }
-
-        @Override
-        public int getChildrenCount(int i) {
-            return 0;
-        }
-
-        @Override
-        public Object getGroup(int i) {
-            return mFoundLeDeviceArray[i];
-        }
-
-        @Override
-        public Object getChild(int i, int i1) {
-            return null;
         }
 
         @Override
@@ -270,6 +268,85 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
+        public boolean isChildSelectable(int i, int i1) {
+            return false;
+        }
+
+        @Override
+        public boolean areAllItemsEnabled() {
+            return false;
+        }
+
+        @Override
+        public void onGroupExpanded(int i) {
+
+        }
+
+        @Override
+        public void onGroupCollapsed(int i) {
+
+        }
+
+        @Override
+        public long getCombinedChildId(long l, long l1) {
+            return (l << Integer.SIZE) | (l1 & 0x00000000FFFFFFFF);
+        }
+
+        @Override
+        public long getCombinedGroupId(long l) {
+            return l;
+        }
+    }
+
+    // for Central
+    private class PeripheralListAdapter extends LocalExpandableListAdapter {
+        private FoundLeDevice[] mFoundLeDeviceArray = new FoundLeDevice[0];
+
+        @Override
+        public void dataSetChange() {
+            if (mBleCentral != null) {
+                mFoundLeDeviceArray = mBleCentral.getFoundLeDeviceList();
+            } else {
+                mFoundLeDeviceArray = new FoundLeDevice[0];
+            }
+
+            super.dataSetChange();
+        }
+
+        @Override
+        public int getGroupCount() {
+            return mFoundLeDeviceArray.length;
+        }
+
+        @Override
+        public int getChildrenCount(int i) {
+            FoundLeDevice foundLeDevice = (FoundLeDevice) getGroup(i);
+            List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
+            return serviceList != null ? serviceList.size() : 0;
+        }
+
+        @Override
+        public Object getGroup(int i) {
+            return mFoundLeDeviceArray[i];
+        }
+
+        @Override
+        public Object getChild(int i, int i1) {
+            BluetoothGattService service = null;
+            FoundLeDevice foundLeDevice = (FoundLeDevice) getGroup(i);
+
+            if (foundLeDevice != null) {
+                List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
+
+                if (serviceList != null && serviceList.size() > i1) {
+                    service = serviceList.get(i1);
+                }
+            }
+
+            return service;
+        }
+
+        @Override
         public View getGroupView(int i, boolean b, View convertView, ViewGroup parent) {
             if (convertView == null) {
                 convertView = getLayoutInflater().inflate(R.layout.item_peripheral_list, parent, false);
@@ -282,13 +359,13 @@ public class MainActivity extends AppCompatActivity {
 
                 String content = device.getName();
                 if (content != null && content.length() > 0) {
-                    contentBuilder.append(getString(R.string.ble_device_name)).append(": ").append(content).append("\n");
+                    contentBuilder.append(getString(R.string.name)).append(": ").append(content).append("\n");
                 }
                 content = device.getAddress();
                 if (content != null && content.length() > 0) {
-                    contentBuilder.append(getString(R.string.ble_device_address)).append(": ").append(content).append("\n");
+                    contentBuilder.append(getString(R.string.address)).append(": ").append(content).append("\n");
                 }
-                ((TextView) convertView.findViewById(R.id.tvPeripheralInformation)).setText(content);
+                ((TextView) convertView.findViewById(R.id.tvServiceInformation)).setText(content);
             }
 
             return convertView;
@@ -303,45 +380,50 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (mBleCentral != null) {
-                FoundLeDevice foundLeDevice = mFoundLeDeviceArray[i];
+                final LinearLayout fLlCharacteristicListLayout = convertView.findViewById(R.id.llCharacteristicList);
+                FoundLeDevice foundLeDevice = (FoundLeDevice) getGroup(i);
                 List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
                 BluetoothDevice device = foundLeDevice.getDevice();
-                StringBuilder contentBuilder = new StringBuilder();
+                BluetoothGattService service = (BluetoothGattService) getChild(i, i1);
 
-                if (serviceList != null && serviceList.size() > i1) {
-                    BluetoothGattService service = serviceList.get(i1);
+                if (service != null) {
                     List<BluetoothGattCharacteristic> characteristicList = service.getCharacteristics();
-                    mBleCentral.readCharacteristic(device, a, new BleCentral.OnCharacteristicReadListener() {
-                        @Override
-                        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+                    if (characteristicList != null) {
+                        fLlCharacteristicListLayout.setTag(ViewTagCharacteristicList, characteristicList);
 
+                        for (BluetoothGattCharacteristic characteristic : characteristicList) {
+                            mBleCentral.readCharacteristic(device, characteristic, new BleCentral.OnCharacteristicReadListener() {
+                                @Override
+                                public void onCharacteristicRead(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic, int status) {
+                                    List<BluetoothGattCharacteristic> characteristicList = (List<BluetoothGattCharacteristic>) fLlCharacteristicListLayout.getTag(ViewTagCharacteristicList);
+                                    if (characteristicList != null && characteristicList.contains(characteristic)) {
+                                        View characteristicView = getLayoutInflater().inflate(R.layout.item_characteristic_list, fLlCharacteristicListLayout, false);
+                                        final EditText fEtCharacteristic = characteristicView.findViewById(R.id.btnUpdateCharacteristic);
+                                        Button btnUpdateCharacteristic = characteristicView.findViewById(R.id.btnUpdateCharacteristic);
+
+                                        fEtCharacteristic.setText(new String(characteristic.getValue()));
+                                        if ((characteristic.getPermissions() & BluetoothGattCharacteristic.PERMISSION_WRITE) == BluetoothGattCharacteristic.PERMISSION_WRITE) {
+                                            fEtCharacteristic.setEnabled(true);
+                                            btnUpdateCharacteristic.setEnabled(true);
+                                            btnUpdateCharacteristic.setOnClickListener(new View.OnClickListener() {
+                                                @Override
+                                                public void onClick(View view) {
+                                                    mBleCentral.writeCharacteristic(gatt.getDevice(), characteristic.getService().getUuid(), characteristic.getUuid(), fEtCharacteristic.getText().toString().getBytes());
+                                                }
+                                            });
+                                        } else {
+                                            fEtCharacteristic.setEnabled(false);
+                                            btnUpdateCharacteristic.setEnabled(false);
+                                        }
+                                    }
+                                }
+                            });
                         }
-                    });
-                    contentBuilder.append(getString(R.string.ble_characteristic)).append(": ").append(service.getCharacteristics())
+                    }
                 }
-
-                String content = device.getName();
-                if (content != null && content.length() > 0) {
-                    contentBuilder.append(getString(R.string.ble_device_name)).append(": ").append(content).append("\n");
-                }
-                content = device.getAddress();
-                if (content != null && content.length() > 0) {
-                    contentBuilder.append(getString(R.string.ble_device_address)).append(": ").append(content).append("\n");
-                }
-                ((TextView) convertView.findViewById(R.id.tvPeripheralInformation)).setText(content);
             }
 
             return convertView;
-        }
-
-        @Override
-        public boolean isChildSelectable(int i, int i1) {
-            return false;
-        }
-
-        @Override
-        public boolean areAllItemsEnabled() {
-            return false;
         }
 
         @Override
@@ -355,43 +437,183 @@ public class MainActivity extends AppCompatActivity {
 
             return isEmpty;
         }
-
-        @Override
-        public void onGroupExpanded(int i) {
-            // 処理なし
-        }
-
-        @Override
-        public void onGroupCollapsed(int i) {
-            // 処理なし
-        }
-
-        @Override
-        public long getCombinedChildId(long l, long l1) {
-            return 0;
-        }
-
-        @Override
-        public long getCombinedGroupId(long l) {
-            return 0;
-        }
     }
 
-    private class CharacteristicListAdapter extends RecyclerView.Adapter {
-
+    // for Peripheral
+    private class ServiceListAdapter extends LocalExpandableListAdapter {
         @Override
-        public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
-            return null;
+        public int getGroupCount() {
+            return mPeripheralServiceList.size() + 1/* for add new service */;
         }
 
         @Override
-        public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+        public int getChildrenCount(int i) {
+            BluetoothGattService service = (BluetoothGattService) getGroup(i);
+            int ret = 1/* for add new characteristic */;
 
+            if (service != null) {
+                ret += service.getCharacteristics().size();
+            }
+
+            return ret;
         }
 
         @Override
-        public int getItemCount() {
-            return 0;
+        public Object getGroup(int i) {
+            Object ret = null;
+
+            if (i > 0) {
+                i--;    // 「add new service」分減算
+                ret = mPeripheralServiceList.get(i);
+            }
+
+            return ret;
+        }
+
+        @Override
+        public Object getChild(int i, int i1) {
+            Object ret = null;
+            BluetoothGattService service = (BluetoothGattService) getGroup(i);
+
+            if (service != null) {
+                if (i1 > 0) {
+                    i1--;   // 「add new characteristic」分減算
+                    List<BluetoothGattCharacteristic> characteristicList = service.getCharacteristics();
+                    ret = characteristicList.get(i1);
+                }
+            }
+
+            return ret;
+        }
+
+        public View getGroupView(int i, boolean b, View convertView, ViewGroup parent) {
+            if (convertView == null) {
+                convertView = getLayoutInflater().inflate(R.layout.item_peripheral_list, parent, false);
+            }
+
+            if (mBlePeripheral != null) {
+                if (i == 0) {
+                    // for add new service
+                    convertView.findViewById(R.id.llAddNewServiceArea).setVisibility(View.VISIBLE);
+                    convertView.findViewById(R.id.llServiceInformationArea).setVisibility(View.GONE);
+
+                    convertView.findViewById(R.id.btnAddNewService).setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            if (mBlePeripheral != null) {
+                                BluetoothGattService service = new BluetoothGattService(UUID.randomUUID(), BlePeripheral.GattServiceType.Primary.getValue());
+                                mBlePeripheral.addService(service);
+                                mPeripheralServiceList.add(service);
+                                ServiceListAdapter.this.dataSetChange();
+                            }
+                        }
+                    });
+                } else {
+                    // for service information
+                    convertView.findViewById(R.id.llAddNewServiceArea).setVisibility(View.GONE);
+                    convertView.findViewById(R.id.llServiceInformationArea).setVisibility(View.VISIBLE);
+
+                    BluetoothGattService service = (BluetoothGattService) getGroup(i);
+                    StringBuilder contentBuilder = new StringBuilder();
+
+                    String content = service.getUuid().toString();
+                    if (content != null && content.length() > 0) {
+                        contentBuilder.append(getString(R.string.uuid)).append(": ").append(content).append("\n");
+                    }
+                    contentBuilder.append(getString(R.string.type)).append(": ").append(service.getType() == BluetoothGattService.SERVICE_TYPE_PRIMARY ? getString(R.string.primary) : getString(R.string.secondary)).append("\n");
+                    ((TextView) convertView.findViewById(R.id.tvServiceInformation)).setText(content);
+                }
+            }
+
+            return convertView;
+        }
+
+        @Override
+        public View getChildView(int i, int i1, boolean b, View convertView, ViewGroup parent) {
+            if (convertView == null) {
+                convertView = getLayoutInflater().inflate(R.layout.item_characteristic_list, parent, false);
+            }
+
+            if (mBlePeripheral != null) {
+                Button btnUpdateCharacteristic = convertView.findViewById(R.id.btnUpdateCharacteristic);
+                Button btnAddNewCharacteristic = convertView.findViewById(R.id.btnAddNewCharacteristic);
+
+                final BluetoothGattService fService = (BluetoothGattService) getGroup(i);
+                final BluetoothGattCharacteristic fCharacteristic = (BluetoothGattCharacteristic) getChild(i, i1);
+                final EditText fEtCharacteristic = convertView.findViewById(R.id.etCharacteristic);
+                final SwitchCompat fSwWritable = convertView.findViewById(R.id.swWritable);
+
+                if (i1 == 0) {
+                    // for add new characteristic
+                    convertView.findViewById(R.id.llUpdateCharacteristicArea).setVisibility(View.GONE);
+                    convertView.findViewById(R.id.llAddNewCharacteristicArea).setVisibility(View.VISIBLE);
+
+                    btnAddNewCharacteristic.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            if (mBlePeripheral != null) {
+                                String characteristicData = fEtCharacteristic.getText().toString();
+                                if (characteristicData != null && characteristicData.length() > 0) {
+                                    if (fSwWritable.isChecked()) {
+                                        mBlePeripheral.addCharacteristicWritable(fService.getUuid(), UUID.randomUUID(), characteristicData.getBytes(), true);
+                                    } else {
+                                        mBlePeripheral.addCharacteristicReadOnly(fService.getUuid(), UUID.randomUUID(), characteristicData.getBytes(), true);
+                                    }
+
+                                    mCharacteristicServiceMap.put(fCharacteristic, fService);
+                                    fEtCharacteristic.setText("");
+                                    mServiceListAdapter.dataSetChange();
+                                    ToastUtil.showToast(MainActivity.this, R.string.add_new_characteristic, Toast.LENGTH_LONG);
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    // for characteristic information
+                    convertView.findViewById(R.id.llUpdateCharacteristicArea).setVisibility(View.VISIBLE);
+                    convertView.findViewById(R.id.llAddNewCharacteristicArea).setVisibility(View.GONE);
+
+                    fEtCharacteristic.setText(new String(fCharacteristic.getValue()));
+                    btnUpdateCharacteristic.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            if (mBlePeripheral != null) {
+                                byte[] newData = fEtCharacteristic.getText().toString().getBytes();
+                                byte[] oldData = fCharacteristic.getValue();
+
+                                if (!Arrays.equals(oldData, newData)) {
+                                    mBlePeripheral.updateCharacteristic(fService.getUuid(), fCharacteristic.getUuid(), newData, true);
+                                    ToastUtil.showToast(MainActivity.this, R.string.notify_characteristic_changed, Toast.LENGTH_LONG);
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            return convertView;
+        }
+
+        @Override
+        public boolean isChildSelectable(int i, int i1) {
+            return true;
+        }
+
+        @Override
+        public boolean areAllItemsEnabled() {
+            return true;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            boolean isEmpty = true;
+
+            if (mBleCentral != null) {
+                FoundLeDevice[] foundLeDeviceArray = mBleCentral.getFoundLeDeviceList();
+                isEmpty = ((foundLeDeviceArray == null) || (foundLeDeviceArray.length == 0));
+            }
+
+            return isEmpty;
         }
     }
 }

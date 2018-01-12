@@ -15,7 +15,7 @@
 
         <android.support.v7.widget.SwitchCompat
             android:id="@+id/swWorkMode"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textOn="@string/ble_central"
             android:textOff="@string/ble_peripheral"
@@ -28,7 +28,7 @@
 
         <android.support.v7.widget.SwitchCompat
             android:id="@+id/swWorkSwitch"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/ble_work_switch"/>
 
@@ -43,40 +43,19 @@
 
             <FrameLayout
                 android:id="@+id/flPeripheralArea"
+                android:visibility="gone"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
 
-                <LinearLayout
+                <ExpandableListView
+                    android:id="@+id/elvServiceList"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:weightSum="1.0">
-
-                    <EditText
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1.0"
-                        android:hint="@string/input_characteristic"/>
-
-                    <View
-                        android:layout_width="4dp"
-                        android:layout_height="1dp"/>
-
-                    <Button
-                        android:id="@+id/btnAddCharacteristic"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/add"/>
-                </LinearLayout>
-
-                <android.support.v7.widget.RecyclerView
-                    android:id="@+id/rvCharacteristicList"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"/>
+                    android:layout_height="wrap_content"/>
             </FrameLayout>
 
             <FrameLayout
                 android:id="@+id/flCentralArea"
+                android:visibility="gone"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
 
