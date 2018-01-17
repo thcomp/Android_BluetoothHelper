@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="jp.co.thcomp:android_baseactivity-0.0.2">
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/transforms-1/files-1.1/android_baseactivity-0.0.2.aar/9b81835c408ef6bead9d2ab357c4a697/jars/classes.jar!/" />
+      <root url="file://$USER_HOME$/.gradle/caches/transforms-1/files-1.1/android_baseactivity-0.0.2.aar/9b81835c408ef6bead9d2ab357c4a697/res" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

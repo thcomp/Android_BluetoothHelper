@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="jp.co.thcomp:android_utility-1.0.22">
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/transforms-1/files-1.1/android_utility-1.0.22.aar/d022876e8b334af94b50a8c5b7f44657/jars/classes.jar!/" />
+      <root url="file://$USER_HOME$/.gradle/caches/transforms-1/files-1.1/android_utility-1.0.22.aar/d022876e8b334af94b50a8c5b7f44657/res" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

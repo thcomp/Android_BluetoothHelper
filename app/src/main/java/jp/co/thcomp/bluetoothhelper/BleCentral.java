@@ -12,7 +12,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.os.ParcelUuid;
-import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -21,9 +20,9 @@ import java.util.List;
 import java.util.UUID;
 
 import jp.co.thcomp.util.LogUtil;
-import jp.co.thcomp.util.ToastUtil;
+import jp.co.thcomp.util.ThreadUtil;
 
-@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
+@TargetApi(Build.VERSION_CODES.LOLLIPOP)
 public class BleCentral {
     private static final String TAG = BleCentral.class.getSimpleName();
     private static final long DefaultConnectionTimeoutMS = 30 * 1000;
@@ -37,11 +36,11 @@ public class BleCentral {
     private BluetoothAccessHelper mBtHelper;
     private OnBluetoothStatusListener mBluetoothStatusListener;
     private OnFoundLeDeviceListener mFoundLeDeviceListener;
-    private OnDataReceiveListener mDataReceiveListener;
     private int mCentralState = CentralStateInit;
     private DeviceDiscoverer mDeviceDiscoverer;
-    private HashMap<BluetoothDevice, BluetoothGatt> mDiscoveringServiceDeviceMap = new HashMap<>();
-    private HashMap<BluetoothDevice, FoundLeDevice> mFoundLeDeviceMap = new HashMap<>();
+    private HashMap<BluetoothDevice, OnServicesDiscoveredListener> mDiscoveringServiceDeviceMap = new HashMap<>();
+    private HashMap<LocalCharacteristicInfo, List<OnCharacteristicReadListener>> mReadCharacteristicMap = new HashMap<>();
+    private HashMap<BluetoothDevice, FoundLeDevice> mFoundLeDeviceMap = new HashMap<BluetoothDevice, FoundLeDevice>();
     private HashMap<BluetoothDevice, BluetoothGatt> mConnectedGattMap = new HashMap<>();
     private HashMap<BluetoothDevice, Long> mConnectionTimeoutMap = new HashMap<>();
     private BluetoothGattCharacteristic mCurrentReadingCharacteristic = null;
@@ -68,10 +67,6 @@ public class BleCentral {
 
     public void setOnFoundLeDeviceListener(OnFoundLeDeviceListener listener) {
         mFoundLeDeviceListener = listener;
-    }
-
-    public void setOnDataReceiveListener(OnDataReceiveListener listener) {
-        mDataReceiveListener = listener;
     }
 
     public void start() {
@@ -119,130 +114,181 @@ public class BleCentral {
         return mFoundLeDeviceMap.values().toArray(new FoundLeDevice[0]);
     }
 
-    public void writeCharacteristic(BluetoothDevice device, UUID serviceUuid, UUID characteristicUuid, byte[] data) {
-        LogUtil.d(TAG, "writeCharacteristic(S): service uuid: " + serviceUuid + ", characteristic uuid: " + characteristicUuid);
+    public boolean discoverServices(BluetoothDevice device, OnServicesDiscoveredListener listener) {
+        LogUtil.d(TAG, "discoverServices(S)");
 
-        connectPeripheral(device);
-        BluetoothGatt gatt = mConnectedGattMap.get(device);
-        if (gatt != null) {
-            BluetoothGattService service = gatt.getService(serviceUuid);
-            if (service == null) {
-                // 数秒待ってみよう
-                try {
-                    Thread.sleep(3000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+        boolean ret = false;
+        if (!mDiscoveringServiceDeviceMap.containsKey(device)) {
+            connectPeripheral(device);
+
+            synchronized (mConnectedGattMap) {
+                BluetoothGatt gatt = mConnectedGattMap.get(device);
+                if (gatt != null) {
+                    if ((ret = gatt.discoverServices())) {
+                        mDiscoveringServiceDeviceMap.put(device, listener);
+                    } else {
+                        LogUtil.e(TAG, "discover service failed");
+                    }
                 }
-                service = gatt.getService(serviceUuid);
+            }
+        }
+
+        LogUtil.d(TAG, "discoverServices(E): ret: " + ret);
+        return ret;
+    }
+
+    public void writeCharacteristic(BluetoothDevice fDevice, final UUID fServiceUuid, final UUID fCharacteristicUuid, final byte[] fData) {
+        LogUtil.d(TAG, "writeCharacteristic(S): service uuid: " + fServiceUuid + ", characteristic uuid: " + fCharacteristicUuid);
+
+        connectPeripheral(fDevice);
+
+        final BluetoothGatt fGatt = mConnectedGattMap.get(fDevice);
+        if (fGatt != null) {
+            BluetoothGattService service = null;
+            FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(fDevice);
+            if (foundLeDevice != null) {
+                List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
+                if (serviceList != null && serviceList.size() > 0) {
+                    for (BluetoothGattService tempService : serviceList) {
+                        if (tempService.getUuid().equals(fServiceUuid)) {
+                            service = tempService;
+                            break;
+                        }
+                    }
+                }
             }
 
             if (service != null) {
-                BluetoothGattCharacteristic targetCharacteristic = service.getCharacteristic(characteristicUuid);
-                if (targetCharacteristic != null) {
-                    targetCharacteristic.setValue(data);
-                    if (gatt.writeCharacteristic(targetCharacteristic)) {
-                        ToastUtil.showToast(mContext, "success write characteristic data", Toast.LENGTH_LONG);
-                        LogUtil.d(TAG, "success write characteristic data: " + Arrays.toString(data));
-                    } else {
-                        LogUtil.d(TAG, "fail write characteristic data: " + Arrays.toString(data));
-                    }
-                } else {
-                    LogUtil.e(TAG, "not found characteristic: " + characteristicUuid);
-                }
+                writeCharacteristic(fGatt, service, fCharacteristicUuid, fData);
             } else {
-                LogUtil.e(TAG, "not found service: " + serviceUuid);
+                // 1度だけserviceを探してみる
+                discoverServices(fDevice, new OnServicesDiscoveredListener() {
+                    @Override
+                    public void onServicesDiscovered(BluetoothDevice device, List<BluetoothGattService> serviceList) {
+                        if (serviceList != null && serviceList.size() > 0) {
+                            for (BluetoothGattService service : serviceList) {
+                                if (fServiceUuid.equals(service.getUuid())) {
+                                    writeCharacteristic(fGatt, service, fCharacteristicUuid, fData);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
             }
         }
 
         LogUtil.d(TAG, "writeCharacteristic(E):");
     }
 
-    public BluetoothGattCharacteristic[] readCharacteristics(BluetoothDevice device, UUID
-            serviceUuid) {
-        LogUtil.d(TAG, "readCharacteristics(S): service uuid: " + serviceUuid);
+    private void writeCharacteristic(BluetoothGatt gatt, BluetoothGattService service, UUID characteristicUuid, byte[] data) {
+        BluetoothGattCharacteristic targetCharacteristic = service.getCharacteristic(characteristicUuid);
+        if (targetCharacteristic != null) {
+            targetCharacteristic.setValue(data);
+            if (gatt.writeCharacteristic(targetCharacteristic)) {
+                LogUtil.d(TAG, "success write characteristic data: " + Arrays.toString(data));
+            } else {
+                LogUtil.d(TAG, "fail write characteristic data: " + Arrays.toString(data));
+            }
+        } else {
+            LogUtil.e(TAG, "not found characteristic: " + characteristicUuid);
+        }
+    }
+
+
+    public BluetoothGattCharacteristic[] getCharacteristics(BluetoothDevice device, UUID serviceUuid) {
+        LogUtil.d(TAG, "getCharacteristics(S): service uuid: " + serviceUuid);
         connectPeripheral(device);
 
-        BluetoothGatt gatt = mConnectedGattMap.get(device);
-        ArrayList<BluetoothGattCharacteristic> tempRet = new ArrayList<>();
         BluetoothGattCharacteristic[] ret = null;
+        FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(device);
+        if (foundLeDevice != null) {
+            List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
+            BluetoothGattService service = null;
 
-        if (gatt != null) {
-            BluetoothGattService service = gatt.getService(serviceUuid);
+            if (serviceList != null && serviceList.size() > 0) {
+                for (BluetoothGattService tempService : serviceList) {
+                    if (serviceUuid.equals(tempService.getUuid())) {
+                        service = tempService;
+                        break;
+                    }
+                }
+            }
+
             if (service != null) {
+                ArrayList<BluetoothGattCharacteristic> tempRet = new ArrayList<>();
                 List<BluetoothGattCharacteristic> tempList = service.getCharacteristics();
                 if (tempList != null && tempList.size() > 0) {
-                    for (BluetoothGattCharacteristic characteristic : tempList) {
-                        if (characteristic.getValue() == null) {
-                            if (mCurrentReadingCharacteristic == null) {
-                                mCurrentReadingCharacteristic = characteristic;
-                                gatt.readCharacteristic(characteristic);
-                                LogUtil.d(TAG, "readCharacteristic: UUID: " + characteristic.getUuid());
-                            } else if (!mRequestingReadCharacteristicList.contains(characteristic.getUuid())) {
-                                mRequestingReadCharacteristicList.add(characteristic);
-                            }
-                        }
-
-                        tempRet.add(characteristic);
-                    }
+                    tempRet.addAll(tempList);
                 }
 
                 for (BluetoothGattService includedService : service.getIncludedServices()) {
-                    tempRet.addAll(Arrays.asList(readCharacteristics(gatt, includedService)));
+                    tempRet.addAll(Arrays.asList(getCharacteristics(includedService)));
                 }
-            }
-
-            if (tempRet.size() > 0) {
-                for (BluetoothGattCharacteristic characteristic : tempRet) {
-                    if (characteristic.getValue() == null) {
-                        if (mCurrentReadingCharacteristic == null) {
-                            mCurrentReadingCharacteristic = characteristic;
-                            gatt.readCharacteristic(characteristic);
-                            LogUtil.d(TAG, "readCharacteristic: UUID: " + characteristic.getUuid());
-                        } else if (!mRequestingReadCharacteristicList.contains(characteristic.getUuid())) {
-                            mRequestingReadCharacteristicList.add(characteristic);
-                        }
-                    }
-                }
+                ret = tempRet.toArray(new BluetoothGattCharacteristic[0]);
             }
         }
 
-        LogUtil.d(TAG, "readCharacteristics(S): service uuid: " + serviceUuid);
-        return tempRet.toArray(new BluetoothGattCharacteristic[0]);
+        LogUtil.d(TAG, "getCharacteristics(E)");
+        return ret;
     }
 
-    private BluetoothGattCharacteristic[] readCharacteristics(BluetoothGatt
-                                                                      gatt, BluetoothGattService service) {
-        LogUtil.d(TAG, "readCharacteristics(S): service uuid: " + service.getUuid());
+    private BluetoothGattCharacteristic[] getCharacteristics(BluetoothGattService service) {
+        LogUtil.d(TAG, "getCharacteristics(S): service uuid: " + service.getUuid());
         ArrayList<BluetoothGattCharacteristic> tempRet = new ArrayList<>();
         List<BluetoothGattService> serviceList = service.getIncludedServices();
         BluetoothGattCharacteristic[] ret = null;
 
         if (serviceList != null && serviceList.size() > 0) {
             for (BluetoothGattService includedService : serviceList) {
-                tempRet.addAll(Arrays.asList(readCharacteristics(gatt, includedService)));
+                tempRet.addAll(Arrays.asList(getCharacteristics(includedService)));
             }
         }
 
         List<BluetoothGattCharacteristic> tempList = service.getCharacteristics();
         if (tempList != null && tempList.size() > 0) {
-            for (BluetoothGattCharacteristic characteristic : tempList) {
-                if (characteristic.getValue() == null) {
-                    if (mCurrentReadingCharacteristic == null) {
-                        mCurrentReadingCharacteristic = characteristic;
-                        gatt.readCharacteristic(characteristic);
-                        LogUtil.d(TAG, "readCharacteristic: UUID: " + characteristic.getUuid());
-                    } else if (!mRequestingReadCharacteristicList.contains(characteristic.getUuid())) {
-                        mRequestingReadCharacteristicList.add(characteristic);
-                    }
-                }
-
-                tempRet.add(characteristic);
-            }
+            tempRet.addAll(tempList);
         }
         ret = tempRet.toArray(new BluetoothGattCharacteristic[0]);
 
-        LogUtil.d(TAG, "readCharacteristics(E): ret length: " + ret.length);
+        LogUtil.d(TAG, "getCharacteristics(E): ret length: " + ret.length);
         return ret;
+    }
+
+    public void readCharacteristic(final BluetoothDevice device, final BluetoothGattCharacteristic characteristic, final OnCharacteristicReadListener listener) {
+        LogUtil.d(TAG, "readCharacteristic(S): characteristic uuid: " + characteristic.getUuid());
+        final BluetoothGatt gatt = mConnectedGattMap.get(device);
+        byte[] data = characteristic.getValue();
+
+        if (gatt != null) {
+            if (data != null && data.length > 0) {
+                ThreadUtil.runOnMainThread(mContext, new Runnable() {
+                    @Override
+                    public void run() {
+                        listener.onCharacteristicRead(gatt, characteristic, BluetoothGatt.GATT_SUCCESS);
+                    }
+                });
+            } else {
+                List<OnCharacteristicReadListener> characteristicReadListenerList = mReadCharacteristicMap.get(characteristic);
+                LocalCharacteristicInfo localCharacteristicInfo = new LocalCharacteristicInfo(device, characteristic);
+                if (characteristicReadListenerList == null) {
+                    characteristicReadListenerList = new ArrayList<>();
+                    mReadCharacteristicMap.put(localCharacteristicInfo, characteristicReadListenerList);
+                }
+                characteristicReadListenerList.add(listener);
+
+                synchronized (mRequestingReadCharacteristicList) {
+                    if (mCurrentReadingCharacteristic == null) {
+                        mCurrentReadingCharacteristic = characteristic;
+                        gatt.readCharacteristic(characteristic);
+                    } else {
+                        // １つずつしかreadを受け付けないのでonCharacteristicReadがコールされるまで保留
+                        mRequestingReadCharacteristicList.add(characteristic);
+                    }
+                }
+            }
+        }
+        LogUtil.d(TAG, "readCharacteristic(E)");
     }
 
     public void connectPeripheral(BluetoothDevice device) {
@@ -253,6 +299,7 @@ public class BleCentral {
                 gatt = device.connectGatt(mContext, false, mBtGattCallback);
                 if (gatt != null) {
                     if (gatt.connect()) {
+                        // 実際には未だ接続は完了していない(コネクション確立要求を受け付けただけ)
                         mConnectedGattMap.put(device, gatt);
                     } else {
                         LogUtil.e(TAG, "BluetoothGatt connect failed");
@@ -278,27 +325,6 @@ public class BleCentral {
         mDiscoveringServiceDeviceMap.remove(device);
 
         LogUtil.d(TAG, "disconnectPeripheral(E)");
-    }
-
-    public void discoverServices(BluetoothDevice device) {
-        LogUtil.d(TAG, "discoverServices(S)");
-
-        if (!mDiscoveringServiceDeviceMap.containsKey(device)) {
-            connectPeripheral(device);
-
-            synchronized (mConnectedGattMap) {
-                BluetoothGatt gatt = mConnectedGattMap.get(device);
-                if (gatt != null) {
-                    if (gatt.discoverServices()) {
-                        mDiscoveringServiceDeviceMap.put(device, gatt);
-                    } else {
-                        LogUtil.e(TAG, "discover service failed");
-                    }
-                }
-            }
-        }
-
-        LogUtil.d(TAG, "discoverServices(E)");
     }
 
     private BluetoothAccessHelper.OnBluetoothStatusListener getBluetoothStatusListener() {
@@ -332,28 +358,21 @@ public class BleCentral {
 
     private DeviceDiscoverer.OnFoundLeDeviceListener mRootFoundLeDeviceListener = new DeviceDiscoverer.OnFoundLeDeviceListener() {
         @Override
-        public void onFoundLeDevice(FoundLeDevice device) {
+        public void onFoundLeDevice(FoundLeDevice foundLeDevice) {
             boolean notifyFoundLeDevice = false;
 
-            if (mDiscoveringServiceDeviceMap.containsKey(device.getDevice())) {
-                List<ParcelUuid> serviceUuidList = device.getServiceUuidList();
-                notifyFoundLeDevice = (serviceUuidList != null) && (serviceUuidList.size() > 0);
+            if (!mFoundLeDeviceMap.containsKey(foundLeDevice.getDevice())) {
+                mFoundLeDeviceMap.put(foundLeDevice.getDevice(), foundLeDevice);
 
-                if (notifyFoundLeDevice) {
-                    LogUtil.d(TAG, "discover service on onFoundLeDevice");
-                    mDiscoveringServiceDeviceMap.remove(device.getDevice());
-                } else {
-                    LogUtil.d(TAG, "not found service on onFoundLeDevice");
+                if (!mConnectedGattMap.containsKey(foundLeDevice.getDevice())) {
+                    notifyFoundLeDevice = true;
                 }
-            } else {
-                notifyFoundLeDevice = !mFoundLeDeviceMap.containsKey(device.getDevice());
             }
 
             if (notifyFoundLeDevice) {
-                mFoundLeDeviceMap.put(device.getDevice(), device);
                 OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
                 if (listener != null) {
-                    listener.onFoundLeDevice(device);
+                    listener.onFoundLeDevice(foundLeDevice);
                 }
             }
         }
@@ -404,9 +423,10 @@ public class BleCentral {
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 LogUtil.d(TAG, "BluetoothGatt.STATE_CONNECTED: discover services: " + gatt.getDevice().getAddress());
 
-                if (mDiscoveringServiceDeviceMap.remove(device) != null) {
+                OnServicesDiscoveredListener listener;
+                if ((listener = mDiscoveringServiceDeviceMap.remove(device)) != null) {
                     // サービス検索が空ぶっていたので、再度実行
-                    discoverServices(device);
+                    discoverServices(device, listener);
                 }
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 LogUtil.d(TAG, "BluetoothGatt.STATE_DISCONNECTED");
@@ -422,28 +442,33 @@ public class BleCentral {
             super.onServicesDiscovered(gatt, status);
 
             BluetoothDevice device = gatt.getDevice();
-            long connectionTimeoutMS = System.currentTimeMillis() + mConnectionTimeoutMS;
 
             LogUtil.d(TAG, "onServicesDiscovered: " + device.getAddress());
+
+            // コネクションタイマー更新
             synchronized (mConnectedGattMap) {
-                mConnectionTimeoutMap.put(gatt.getDevice(), connectionTimeoutMS);
+                long connectionTimeoutMS = System.currentTimeMillis() + mConnectionTimeoutMS;
+                mConnectionTimeoutMap.put(gatt.getDevice(), System.currentTimeMillis() + mConnectionTimeoutMS);
                 mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgConnectionTimeout, new ConnectionInfo(device, connectionTimeoutMS)), mConnectionTimeoutMS);
             }
 
-            if (mDiscoveringServiceDeviceMap.containsKey(device)) {
+            OnServicesDiscoveredListener listener = mDiscoveringServiceDeviceMap.remove(device);
+            if (listener != null) {
                 // 見つかったserviceはこのタイミングでしか取得できないことが多い？次のデバイス発見通知で得られるScanResultから取得できなかった模様
-                FoundLeDevice foundLeDevice = mFoundLeDeviceMap.remove(device);
+                List<BluetoothGattService> serviceList = gatt.getServices();
+                FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(device);
+
                 if (foundLeDevice != null) {
+                    // 既にデバイスが発見された後のときは、保持しているインスタンスにServiceリストを設定
                     ArrayList<ParcelUuid> serviceUuidList = new ArrayList<>();
-                    List<BluetoothGattService> serviceList = gatt.getServices();
 
                     for (BluetoothGattService service : serviceList) {
                         serviceUuidList.add(ParcelUuid.fromString(service.getUuid().toString()));
                     }
 
-                    foundLeDevice.setServiceUuidList(serviceUuidList);
-                    mRootFoundLeDeviceListener.onFoundLeDevice(foundLeDevice);
+                    foundLeDevice.setServiceList(serviceList);
                 }
+                listener.onServicesDiscovered(device, serviceList);
             }
         }
 
@@ -454,8 +479,8 @@ public class BleCentral {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 LogUtil.d(TAG, "onCharacteristicRead: UUID: " + characteristic.getUuid() + ", value: " + Arrays.toString(characteristic.getValue()));
 
-                mCurrentReadingCharacteristic = null;
-                if (mRequestingReadCharacteristicList.size() > 0) {
+                synchronized (mRequestingReadCharacteristicList) {
+                    mCurrentReadingCharacteristic = null;
                     while (mRequestingReadCharacteristicList.size() > 0) {
                         mCurrentReadingCharacteristic = mRequestingReadCharacteristicList.remove(0);
                         if (mCurrentReadingCharacteristic.getValue() == null) {
@@ -466,14 +491,19 @@ public class BleCentral {
                     }
                 }
 
-                OnDataReceiveListener listener = mDataReceiveListener;
-                if (listener != null) {
-                    ReceiveCharacteristicData receiveData = new ReceiveCharacteristicData();
-                    receiveData.device = gatt.getDevice();
-                    receiveData.uuid = characteristic.getUuid();
-                    receiveData.data = characteristic.getValue();
-                    receiveData.dataSize = receiveData.data != null ? receiveData.data.length : 0;
-                    listener.onDataReceive(receiveData);
+                LocalCharacteristicInfo localCharacteristicInfo = new LocalCharacteristicInfo(gatt.getDevice(), characteristic);
+                List<OnCharacteristicReadListener> listenerList = mReadCharacteristicMap.remove(localCharacteristicInfo);
+                if (listenerList != null) {
+                    for (OnCharacteristicReadListener listener : listenerList) {
+                        listener.onCharacteristicRead(gatt, characteristic, BluetoothGatt.GATT_SUCCESS);
+                    }
+                }
+
+                // コネクションタイマー更新
+                synchronized (mConnectedGattMap) {
+                    long connectionTimeoutMS = System.currentTimeMillis() + mConnectionTimeoutMS;
+                    mConnectionTimeoutMap.put(gatt.getDevice(), System.currentTimeMillis() + mConnectionTimeoutMS);
+                    mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgConnectionTimeout, new ConnectionInfo(gatt.getDevice(), connectionTimeoutMS)), mConnectionTimeoutMS);
                 }
             }
         }
@@ -528,11 +558,51 @@ public class BleCentral {
         }
     }
 
+    private static class LocalCharacteristicInfo {
+        public BluetoothDevice device;
+        public BluetoothGattCharacteristic characteristic;
+
+        public LocalCharacteristicInfo(BluetoothDevice device, BluetoothGattCharacteristic characteristic) {
+            this.device = device;
+            this.characteristic = characteristic;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            boolean ret = false;
+
+            if (o != null && o instanceof LocalCharacteristicInfo) {
+                LocalCharacteristicInfo targetInfo = (LocalCharacteristicInfo) o;
+                ret = targetInfo.device.equals(device) && targetInfo.characteristic.equals(characteristic);
+            }
+
+            return ret;
+        }
+
+        @Override
+        public int hashCode() {
+            return device.hashCode() + characteristic.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return super.toString();
+        }
+    }
+
     public interface OnBluetoothStatusListener extends BluetoothAccessHelper.OnBluetoothStatusListener {
         // 拡張なし
     }
 
     public interface OnFoundLeDeviceListener extends DeviceDiscoverer.OnFoundLeDeviceListener {
         // 拡張なし
+    }
+
+    public interface OnServicesDiscoveredListener {
+        public void onServicesDiscovered(BluetoothDevice device, List<BluetoothGattService> serviceList);
+    }
+
+    public interface OnCharacteristicReadListener {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status);
     }
 }

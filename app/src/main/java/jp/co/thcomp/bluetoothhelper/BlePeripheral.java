@@ -16,9 +16,10 @@ import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
 import android.os.Build;
-import android.os.ParcelUuid;
 
 import java.util.HashMap;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import jp.co.thcomp.util.LogUtil;
@@ -112,16 +113,16 @@ public class BlePeripheral {
         mServiceChangedListener = listener;
     }
 
-    public void addRootServiceUuid(ParcelUuid serviceUuid) {
-        mDataBuilder.addServiceUuid(serviceUuid);
-    }
-
-    public void addRootServiceUuidAndData(ParcelUuid serviceUuid, byte[] serviceData) {
-        if (serviceData != null && serviceData.length > MaxServiceDataByteSize) {
-            throw new IllegalArgumentException("service data is larger than " + MaxServiceDataByteSize);
-        }
-        mDataBuilder.addServiceData(serviceUuid, serviceData);
-    }
+//    public void addRootServiceUuid(ParcelUuid serviceUuid) {
+//        mDataBuilder.addServiceUuid(serviceUuid);
+//    }
+//
+//    public void addRootServiceUuidAndData(ParcelUuid serviceUuid, byte[] serviceData) {
+//        if (serviceData != null && serviceData.length > MaxServiceDataByteSize) {
+//            throw new IllegalArgumentException("service data is larger than " + MaxServiceDataByteSize);
+//        }
+//        mDataBuilder.addServiceData(serviceUuid, serviceData);
+//    }
 
     public void setAdvertiseMode(AdvertiseMode mode) {
         if (mode != null) {
@@ -170,37 +171,37 @@ public class BlePeripheral {
         return mBtHelper.restoreDeviceName();
     }
 
-    @Deprecated
-    public boolean setCharacteristic(UUID serviceUuid, int properties, int permissions, byte[] data) {
-        BluetoothGattService service = mGattServer.getService(serviceUuid);
-        GattServiceType serviceType = GattServiceType.Primary;
-
-        if (service != null) {
-            for (GattServiceType tempServiceType : GattServiceType.values()) {
-                if (tempServiceType.getValue() == service.getType()) {
-                    serviceType = tempServiceType;
-                    break;
-                }
-            }
-
-            // データ更新のため一旦サービスを削除
-            mGattServer.removeService(service);
-        }
-        service = new BluetoothGattService(serviceUuid, serviceType.getValue());
-
-        BleSendDataProvider dataProvider = new BleSendDataProvider(data);
-        byte[] buffer = null;
-        int minMTU = getMinimumMTU();
-
-        for (int packetIndex = 0; (buffer = dataProvider.getPacket(minMTU, packetIndex)) != null; packetIndex++) {
-            UUID characteristicUuid = UUID.randomUUID();
-            BluetoothGattCharacteristic characteristic = new BluetoothGattCharacteristic(characteristicUuid, properties, permissions);
-            characteristic.setValue(buffer);
-            service.addCharacteristic(characteristic);
-        }
-
-        return mGattServer.addService(service);
-    }
+//    @Deprecated
+//    public boolean setCharacteristic(UUID serviceUuid, int properties, int permissions, byte[] data) {
+//        BluetoothGattService service = mGattServer.getService(serviceUuid);
+//        GattServiceType serviceType = GattServiceType.Primary;
+//
+//        if (service != null) {
+//            for (GattServiceType tempServiceType : GattServiceType.values()) {
+//                if (tempServiceType.getValue() == service.getType()) {
+//                    serviceType = tempServiceType;
+//                    break;
+//                }
+//            }
+//
+//            // データ更新のため一旦サービスを削除
+//            mGattServer.removeService(service);
+//        }
+//        service = new BluetoothGattService(serviceUuid, serviceType.getValue());
+//
+//        BleSendDataProvider dataProvider = new BleSendDataProvider(data);
+//        byte[] buffer = null;
+//        int minMTU = getMinimumMTU();
+//
+//        for (int packetIndex = 0; (buffer = dataProvider.getPacket(minMTU, packetIndex)) != null; packetIndex++) {
+//            UUID characteristicUuid = UUID.randomUUID();
+//            BluetoothGattCharacteristic characteristic = new BluetoothGattCharacteristic(characteristicUuid, properties, permissions);
+//            characteristic.setValue(buffer);
+//            service.addCharacteristic(characteristic);
+//        }
+//
+//        return mGattServer.addService(service);
+//    }
 
     public void addService(BluetoothGattService service) {
         if (mGattServer != null) {
@@ -214,6 +215,101 @@ public class BlePeripheral {
         if (service != null) {
             mGattServer.removeService(service);
         }
+    }
+
+    public List<BluetoothGattService> getServices() {
+        List<BluetoothGattService> ret = null;
+
+        if (mGattServer != null) {
+            ret = mGattServer.getServices();
+        }
+
+        return ret;
+    }
+
+    public BluetoothGattService getService(UUID uuid) {
+        BluetoothGattService ret = null;
+
+        if (mGattServer != null) {
+            ret = mGattServer.getService(uuid);
+        }
+
+        return ret;
+    }
+
+    public List<BluetoothGattCharacteristic> getCharacteristics(UUID serviceUuid) {
+        List<BluetoothGattCharacteristic> ret = null;
+
+        if (mGattServer != null) {
+            BluetoothGattService targetService = mGattServer.getService(serviceUuid);
+            if (targetService != null) {
+                ret = targetService.getCharacteristics();
+            }
+        }
+
+        return ret;
+    }
+
+    public BluetoothGattCharacteristic getCharacteristic(UUID serviceUuid, UUID characteristicUuid) {
+        BluetoothGattCharacteristic ret = null;
+
+        if (mGattServer != null) {
+            BluetoothGattService targetService = mGattServer.getService(serviceUuid);
+            if (targetService != null) {
+                ret = targetService.getCharacteristic(characteristicUuid);
+            }
+        }
+
+        return ret;
+    }
+
+    public boolean addCharacteristic(UUID serviceUuid, UUID characteristicUuid, byte[] data, int properties, int permissions, boolean confirm) {
+        boolean ret = false;
+        BluetoothGattService service = getService(serviceUuid);
+        BluetoothGattCharacteristic characteristic = getCharacteristic(serviceUuid, characteristicUuid);
+
+        if (service != null && characteristic == null) {
+            characteristic = new BluetoothGattCharacteristic(characteristicUuid, properties, permissions);
+            characteristic.setValue(data);
+            ret = service.addCharacteristic(characteristic);
+
+            Set<BluetoothDevice> deviceSet = mTransferSettingMap.keySet();
+            if (deviceSet != null && deviceSet.size() > 0) {
+                // このPeripheralと接続している全てのCentralへ変更を通知
+                for (BluetoothDevice device : deviceSet) {
+                    mGattServer.notifyCharacteristicChanged(device, characteristic, confirm);
+                }
+            }
+        }
+
+        return ret;
+    }
+
+    public boolean addCharacteristicReadOnly(UUID serviceUuid, UUID characteristicUuid, byte[] data, boolean confirm) {
+        return addCharacteristic(serviceUuid, characteristicUuid, data, BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ, confirm);
+    }
+
+    public boolean addCharacteristicWritable(UUID serviceUuid, UUID characteristicUuid, byte[] data, boolean confirm) {
+        return addCharacteristic(serviceUuid, characteristicUuid, data, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE, confirm);
+    }
+
+    public boolean updateCharacteristic(UUID serviceUuid, UUID characteristicUuid, byte[] data, boolean confirm) {
+        boolean ret = false;
+        BluetoothGattCharacteristic characteristic = getCharacteristic(serviceUuid, characteristicUuid);
+
+        if (characteristic != null) {
+            characteristic.setValue(data);
+
+            Set<BluetoothDevice> deviceSet = mTransferSettingMap.keySet();
+            if (deviceSet != null && deviceSet.size() > 0) {
+                // このPeripheralと接続している全てのCentralへ変更を通知
+                for (BluetoothDevice device : deviceSet) {
+                    mGattServer.notifyCharacteristicChanged(device, characteristic, confirm);
+                }
+            }
+        }
+
+        return ret;
     }
 
     public int getMinimumMTU() {

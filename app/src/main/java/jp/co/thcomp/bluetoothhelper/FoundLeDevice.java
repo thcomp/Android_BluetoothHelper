@@ -2,11 +2,13 @@ package jp.co.thcomp.bluetoothhelper;
 
 import android.annotation.TargetApi;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGattService;
 import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.os.Build;
 import android.os.ParcelUuid;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class FoundLeDevice {
@@ -20,6 +22,10 @@ public class FoundLeDevice {
 
     private List<ParcelUuid> mServiceUuidList;
 
+    private List<BluetoothGattService> mDiscoveredServiceList;
+
+    private int mCallbackType;
+
     public FoundLeDevice(BluetoothDevice device, int rssi, byte[] scanRecord) {
         mDevice = device;
         mRssi = rssi;
@@ -27,7 +33,8 @@ public class FoundLeDevice {
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    public FoundLeDevice(ScanResult scanResult) {
+    public FoundLeDevice(int callbackType, ScanResult scanResult) {
+        mCallbackType = callbackType;
         mDevice = scanResult.getDevice();
         mRssi = scanResult.getRssi();
         mScanResult = scanResult;
@@ -64,7 +71,24 @@ public class FoundLeDevice {
         return mServiceUuidList;
     }
 
-    void setServiceUuidList(List<ParcelUuid> serviceUuidList) {
-        mServiceUuidList = serviceUuidList;
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    public int getCallbackType() {
+        return mCallbackType;
+    }
+
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
+    void setServiceList(List<BluetoothGattService> serviceList) {
+        mDiscoveredServiceList = serviceList;
+
+        if (serviceList != null && serviceList.size() > 0) {
+            mServiceUuidList = new ArrayList<>();
+            for (BluetoothGattService service : serviceList) {
+                mServiceUuidList.add(ParcelUuid.fromString(service.getUuid().toString()));
+            }
+        }
+    }
+
+    public List<BluetoothGattService> getServiceList() {
+        return mDiscoveredServiceList;
     }
 }
