@@ -1,17 +1,20 @@
 package jp.co.thcomp.bluetoothhelper;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
+import android.bluetooth.le.BluetoothLeAdvertiser;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
 import android.os.Handler;
-import android.os.Message;
 import android.support.v4.content.LocalBroadcastManager;
 
 import java.io.IOException;
@@ -21,20 +24,25 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import jp.co.thcomp.activity.HandleResultActivity;
 import jp.co.thcomp.util.LogUtil;
-import jp.co.thcomp.util.SimplexHashMultimap;
 import jp.co.thcomp.util.ThreadUtil;
 
 public class BluetoothAccessHelper {
+    public static final int StatusDisableDiscoverable = -3;
+    public static final int StatusDisableBluetooth = -2;
     public static final int StatusNoSupportBluetooth = -1;
     public static final int StatusInit = 0;
     public static final int StatusProgress = 1;
     public static final int StatusStartBluetooth = 10;
+    public static final int StatusStartDiscoverable = 100;
+    static final int StatusFirstExtension = 1000;
 
     public static final UUID BT_SDP = UUID.fromString("00000001-0000-1000-8000-00805F9B34FB");
     public static final UUID BT_RFCOMM = UUID.fromString("00000003-0000-1000-8000-00805F9B34FB");
@@ -51,10 +59,10 @@ public class BluetoothAccessHelper {
     public static final UUID BT_NETWORK_ACCESS_POINT = UUID.fromString("00001116-0000-1000-8000-00805F9B34FB");
     public static final UUID BT_GROUP_NETWORK = UUID.fromString("00001117-0000-1000-8000-00805F9B34FB");
 
-    public static final int ServerInit = 0;
-    public static final int ServerAccept = 1;
-    public static final int ServerReceiveData = 2;
-    public static final int ServerClosed = 3;
+    public static final int ServerStatusNone = 0;
+    public static final int ServerStatusAcceptConnection = 1;
+    public static final int ServerStatusCreateConnection = 2;
+    public static final int ServerStatusDisconnectConnection = 3;
 
     public static final int SendSuccess = 0;
     public static final int SendFailByBondError = -1;
@@ -63,11 +71,10 @@ public class BluetoothAccessHelper {
     public static final int SendFailByUnknownError = -4;
 
     private static BluetoothAdapter sAdapter;
-    private static final SimplexHashMultimap<String, BluetoothDevice> sFoundDeviceMap = new SimplexHashMultimap<String, BluetoothDevice>();
     private static final ArrayList<BluetoothAccessHelper> sAccessHelperList = new ArrayList<BluetoothAccessHelper>();
     private static boolean sEnableAutoStartBluetooth = false;
-    private static int sScanMode = BluetoothAdapter.SCAN_MODE_NONE;
-    private static int sBluetoothStatus = StatusInit;
+    static int sScanMode = BluetoothAdapter.SCAN_MODE_NONE;
+    static int sBluetoothStatus = StatusInit;
     private static long sStopDiscoverTimeMS = 0;
     private static boolean sDebug = false;
 
@@ -84,14 +91,8 @@ public class BluetoothAccessHelper {
         void onStatusChange(int status, int scanMode);
     }
 
-    public interface OnDeviceStatusListener {
-        void onFoundDevice(BluetoothDevice foundDevice);
-
-        void onPairedDevice(BluetoothDevice foundDevice);
-    }
-
-    public interface OnServerReceiveListener {
-        void onStatusChange(int serverStatus);
+    public interface OnServerStatusChangeListener {
+        void onStatusChange(int serverStatus, BluetoothDevice targetDevice, UUID targetUUID);
     }
 
     public interface OnNotifyResultListener {
@@ -161,10 +162,6 @@ public class BluetoothAccessHelper {
                             }
                         }
                 );
-            } else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                // Get the BluetoothDevice object from the Intent
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                sFoundDeviceMap.add(device.getName(), device);
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 final BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 ThreadUtil.runOnMainThread(context, new Runnable() {
@@ -202,11 +199,13 @@ public class BluetoothAccessHelper {
 
     private Context mContext;
     private String mApplicationName;
+    private String mOriginalDeviceName;
     private UUID mServerUuid = null;
-    private Handler mMainLooperHandler;
     private Handler mNotifyHandler;
     private OnBluetoothStatusListener mStatusListener;
     private OnNotifyResultListener mNotifyResultListener;
+    private OnServerStatusChangeListener mServerStatusChangeListener;
+    private OnFoundLeDeviceListener mFoundLeDeviceListener;
     private BluetoothServerSocket mServerSocket = null;
     private final ConcurrentLinkedQueue mSendDataQueue = new ConcurrentLinkedQueue();
     private final HashMap<BluetoothDevice, DataBox> mBondingDeviceMap = new HashMap<>();
@@ -214,13 +213,20 @@ public class BluetoothAccessHelper {
     private Thread mSendDataThread;
     private final HashMap<BluetoothDevice, HashMap<UUID, BluetoothSocket>> mConnectedSocketMap = new HashMap<>();
 
+    public BluetoothAccessHelper(Context context) {
+        this(context, null, null);
+    }
+
     public BluetoothAccessHelper(Context context, String applicationName) {
         this(context, applicationName, null);
     }
 
     public BluetoothAccessHelper(Context context, String applicationName, String uuidText) {
-        if (context == null || applicationName == null || applicationName.length() == 0) {
+        if (context == null) {
             throw new NullPointerException("context == null || applicationName == null || applicationName.length() == 0");
+        }
+        if ((uuidText != null && uuidText.length() > 0) && (applicationName == null || applicationName.length() == 0)) {
+            throw new NullPointerException("(uuidText != null && uuidText.length() > 0) && (applicationName == null || applicationName.length() == 0)");
         }
         mContext = context;
 
@@ -228,7 +234,29 @@ public class BluetoothAccessHelper {
         if (uuidText != null) {
             mServerUuid = UUID.fromString(uuidText);
         }
-        mMainLooperHandler = new Handler(context.getMainLooper(), mMessageCallback);
+    }
+
+    public boolean setDeviceName(String deviceName) {
+        boolean ret = false;
+
+        if (sAdapter != null) {
+            ret = true;
+            mOriginalDeviceName = sAdapter.getName();
+            sAdapter.setName(deviceName);
+        }
+
+        return ret;
+    }
+
+    public boolean restoreDeviceName() {
+        boolean ret = false;
+
+        if (sAdapter != null && mOriginalDeviceName != null) {
+            ret = true;
+            sAdapter.setName(mOriginalDeviceName);
+        }
+
+        return ret;
     }
 
     public void setServerUuid(String uuidText) {
@@ -245,6 +273,10 @@ public class BluetoothAccessHelper {
 
     public void setOnNotifyResultListener(OnNotifyResultListener listener) {
         mNotifyResultListener = listener;
+    }
+
+    public void setOnServerStatusChangeListener(OnServerStatusChangeListener listener) {
+        mServerStatusChangeListener = listener;
     }
 
     public void enableAutoStartBluetooth(boolean enable) {
@@ -282,6 +314,10 @@ public class BluetoothAccessHelper {
                         changeStatus(mStatusListener, StatusStartBluetooth, null);
                     }
                 } else {
+                    if (sBluetoothStatus == StatusDisableBluetooth) {
+                        // 一旦初期状態に戻して、再度ユーザに問い合わせられるようにする
+                        sBluetoothStatus = StatusInit;
+                    }
                     enableBluetooth(null);
                 }
             }
@@ -304,6 +340,17 @@ public class BluetoothAccessHelper {
 
             disconnectAll();
         }
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    public BluetoothLeAdvertiser getBleAdvertiser() {
+        BluetoothLeAdvertiser ret = null;
+
+        if (sAdapter != null) {
+            ret = sAdapter.getBluetoothLeAdvertiser();
+        }
+
+        return ret;
     }
 
     public void requestDiscoverable() {
@@ -341,17 +388,55 @@ public class BluetoothAccessHelper {
         return retSet;
     }
 
-    public boolean discoverDevices(long durationMS) {
+    boolean startDiscoverDevices() {
         boolean ret = false;
 
         if (sAdapter != null) {
             ret = sAdapter.startDiscovery();
+        }
 
-            long stopDiscoverTimeMS = System.currentTimeMillis() + durationMS;
-            if (sStopDiscoverTimeMS < stopDiscoverTimeMS) {
-                sStopDiscoverTimeMS = stopDiscoverTimeMS;
-                mMainLooperHandler.removeMessages(StopDiscover);
-                mMainLooperHandler.sendEmptyMessageDelayed(StopDiscover, durationMS);
+        return ret;
+    }
+
+    boolean stopDiscoverDevices() {
+        boolean ret = false;
+
+        if (sAdapter != null) {
+            ret = sAdapter.cancelDiscovery();
+        }
+
+        return ret;
+    }
+
+    boolean startDiscoverLeDevices(OnFoundLeDeviceListener foundLeDeviceListener) {
+        boolean ret = false;
+
+        if (sAdapter != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+                ret = sAdapter.startLeScan(mLeScanCallback);
+                mFoundLeDeviceListener = foundLeDeviceListener;
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                sAdapter.getBluetoothLeScanner().startScan(mLeScanCallback2);
+                mFoundLeDeviceListener = foundLeDeviceListener;
+                ret = true;
+            }
+        }
+
+        return ret;
+    }
+
+    boolean stopDiscoverLeDevices() {
+        boolean ret = false;
+
+        if (sAdapter != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+                sAdapter.stopLeScan(mLeScanCallback);
+                mFoundLeDeviceListener = null;
+                ret = true;
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                sAdapter.getBluetoothLeScanner().stopScan(mLeScanCallback2);
+                mFoundLeDeviceListener = null;
+                ret = true;
             }
         }
 
@@ -361,11 +446,13 @@ public class BluetoothAccessHelper {
     public boolean startServer() {
         boolean ret = false;
 
-        if (mStartHelper && (mServerUuid != null)) {
+        if (mStartHelper && (mServerUuid != null) && (mApplicationName != null && mApplicationName.length() > 0)) {
             if (mServerSocket == null) {
                 new Thread(mServerSocketRunnable).start();
             }
             ret = true;
+        } else {
+            LogUtil.i(TAG, "startServer failed: mStartHelper=" + mStartHelper + ", ServerUuid=" + mServerUuid + ",ApplicationName=" + mApplicationName);
         }
 
         return ret;
@@ -388,7 +475,6 @@ public class BluetoothAccessHelper {
         boolean ret = false;
         DataBox dataBox = new DataBox(targetUuid, device, new byte[0], 0, 0);
         BluetoothSocket clientSocket = getClientSocket(dataBox);
-
         return clientSocket != null;
     }
 
@@ -429,6 +515,8 @@ public class BluetoothAccessHelper {
                     try {
                         connectedSocket.close();
                     } catch (Exception e) {
+                    } finally {
+                        notifyServerStatusChange(ServerStatusDisconnectConnection, device, targetUuid);
                     }
                 }
 
@@ -441,11 +529,19 @@ public class BluetoothAccessHelper {
 
     public void disconnectAll() {
         synchronized (mConnectedSocketMap) {
-            for (HashMap<UUID, BluetoothSocket> socketMap : mConnectedSocketMap.values()) {
-                for (BluetoothSocket connectedSocket : socketMap.values()) {
+            for (Map.Entry<BluetoothDevice, HashMap<UUID, BluetoothSocket>> entry : mConnectedSocketMap.entrySet()) {
+                BluetoothDevice targetDevice = entry.getKey();
+                HashMap<UUID, BluetoothSocket> socketMap = entry.getValue();
+
+                for (Map.Entry<UUID, BluetoothSocket> socketEntry : socketMap.entrySet()) {
+                    UUID targetUuid = socketEntry.getKey();
+                    BluetoothSocket connectedSocket = socketEntry.getValue();
+
                     try {
                         connectedSocket.close();
                     } catch (IOException e) {
+                    } finally {
+                        notifyServerStatusChange(ServerStatusDisconnectConnection, targetDevice, targetUuid);
                     }
                 }
             }
@@ -565,15 +661,23 @@ public class BluetoothAccessHelper {
 
     private boolean createBond(DataBox dataBox) {
         boolean ret = false;
+        if (dataBox != null) {
+            ret = createBond(dataBox.mDevice);
+        }
+        return ret;
+    }
 
-        if (dataBox != null && dataBox.mDevice != null) {
+    boolean createBond(BluetoothDevice device) {
+        boolean ret = false;
+
+        if (device != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                ret = dataBox.mDevice.createBond();
+                ret = device.createBond();
             } else {
                 try {
                     Class class1 = Class.forName("android.bluetooth.BluetoothDevice");
                     Method createBondMethod = class1.getMethod("createBond");
-                    ret = (Boolean) createBondMethod.invoke(dataBox.mDevice);
+                    ret = (Boolean) createBondMethod.invoke(device);
                 } catch (ClassNotFoundException e) {
                     LogUtil.e(TAG, e.getLocalizedMessage());
                 } catch (InvocationTargetException e) {
@@ -701,6 +805,7 @@ public class BluetoothAccessHelper {
                         synchronized (connectedSocketMap) {
                             connectedSocketMap.put(dataBox.mTargetUUID, clientSocket);
                         }
+                        notifyServerStatusChange(ServerStatusCreateConnection, dataBox.mDevice, dataBox.mTargetUUID);
 
                         if (isEnableDebug()) {
                             LogUtil.v(TAG, "connection established");
@@ -744,6 +849,27 @@ public class BluetoothAccessHelper {
         }
 
         return serverSocket;
+    }
+
+    private void notifyServerStatusChange(final int serverStatus, final BluetoothDevice targetDevice, final UUID targetUuid) {
+        final OnServerStatusChangeListener fListener = mServerStatusChangeListener;
+        if (fListener != null) {
+            if (mNotifyHandler == null) {
+                ThreadUtil.runOnMainThread(mContext, new Runnable() {
+                    @Override
+                    public void run() {
+                        fListener.onStatusChange(serverStatus, targetDevice, targetUuid);
+                    }
+                });
+            } else {
+                mNotifyHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        fListener.onStatusChange(serverStatus, targetDevice, targetUuid);
+                    }
+                });
+            }
+        }
     }
 
     private void notifySendDataResult(int result, DataBox dataBox) {
@@ -801,22 +927,6 @@ public class BluetoothAccessHelper {
                     '}';
         }
     }
-
-    private final Handler.Callback mMessageCallback = new Handler.Callback() {
-        @Override
-        public boolean handleMessage(Message msg) {
-            boolean ret = false;
-
-            if (msg.what == StopDiscover) {
-                if (sAdapter != null) {
-                    sAdapter.cancelDiscovery();
-                }
-                ret = true;
-            }
-
-            return ret;
-        }
-    };
 
     private final Runnable mClientRunnable = new Runnable() {
         @Override
@@ -901,6 +1011,8 @@ public class BluetoothAccessHelper {
                             connectedSocketMap.put(mServerUuid, connectedSocket);
                             mConnectedSocketMap.put(connectedSocket.getRemoteDevice(), connectedSocketMap);
                         }
+
+                        notifyServerStatusChange(ServerStatusAcceptConnection, connectedSocket.getRemoteDevice(), mServerUuid);
                     }
                 }
             }
@@ -918,12 +1030,69 @@ public class BluetoothAccessHelper {
                 if (ret == Activity.RESULT_OK) {
                     LocalBroadcastManager.getInstance(mContext).registerReceiver(mLocalBroadcastReceiver, new IntentFilter(LaunchBluetooth));
                     addBluetoothAccessHelper(BluetoothAccessHelper.this);
+                    changeStatus(StatusStartBluetooth, null);
+                } else {
+                    changeStatus(mStatusListener, StatusDisableBluetooth, null);
                 }
-
-                changeStatus(StatusStartBluetooth, null);
             } else if (DiscoverableOwnDevice.equals(action)) {
                 // 処理なし
+                int ret = intent.getIntExtra(HandleResultActivity.INTENT_INT_EXTRA_RESULT_CODE_FROM_TARGET, Activity.RESULT_CANCELED);
+
+                if (ret == Activity.RESULT_CANCELED) {
+                    // 端末を外部から見えなくなっている(ペアリング済み以外は見えない)
+                    changeStatus(StatusDisableDiscoverable, null);
+                } else {
+                    changeStatus(StatusStartDiscoverable, null);
+                }
             }
         }
     };
+
+    private BluetoothAdapter.LeScanCallback mLeScanCallback = new BluetoothAdapter.LeScanCallback() {
+        @Override
+        public void onLeScan(BluetoothDevice bluetoothDevice, int i, byte[] bytes) {
+            OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
+            if (listener != null) {
+                FoundLeDevice foundLeDevice = new FoundLeDevice(bluetoothDevice, i, bytes);
+                listener.onFoundLeDevice(foundLeDevice);
+            }
+        }
+    };
+
+    private ScanCallback mLeScanCallback2 = new ScanCallback() {
+        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+            super.onScanResult(callbackType, result);
+
+            OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
+            if (listener != null) {
+                FoundLeDevice foundLeDevice = new FoundLeDevice(callbackType, result);
+                listener.onFoundLeDevice(foundLeDevice);
+            }
+        }
+
+        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+        @Override
+        public void onBatchScanResults(List<ScanResult> results) {
+            super.onBatchScanResults(results);
+//
+//            OnFoundLeDeviceListener listener = mFoundLeDeviceListener;
+//            if (listener != null) {
+//                for (ScanResult result : results) {
+//                    FoundLeDevice foundLeDevice = new FoundLeDevice(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result);
+//                    listener.onFoundLeDevice(foundLeDevice);
+//                }
+//            }
+        }
+
+        @Override
+        public void onScanFailed(int errorCode) {
+            super.onScanFailed(errorCode);
+        }
+    };
+
+    interface OnFoundLeDeviceListener {
+        public void onFoundLeDevice(FoundLeDevice device);
+    }
 }

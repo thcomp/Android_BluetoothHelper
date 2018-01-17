@@ -1,4 +1,4 @@
-package jp.co.thcomp.bluetoothhelper;
+package android.example.com.sampleble;
 
 import org.junit.Test;
 

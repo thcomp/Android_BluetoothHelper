@@ -21,7 +21,7 @@ repositories {
 
 dependencies {
     compile fileTree(include: ['*.jar'], dir: 'libs')
-    compile 'jp.co.thcomp:android_utility:1.0.+'
+    compile 'jp.co.thcomp:android_utility:1.0.23'
     compile 'jp.co.thcomp:android_baseactivity:0.0.+'
     androidTestCompile('com.android.support.test.espresso:espresso-core:2.2.2', {
         exclude group: 'com.android.support', module: 'support-annotations'
@@ -38,7 +38,7 @@ uploadArchives {
     repositories {
         mavenDeployer {
             repository url: "file://${repo.absolutePath}"
-            pom.version = '0.0.8'
+            pom.version = '0.0.9'
             pom.groupId = 'jp.co.thcomp'
             pom.artifactId = 'android_bluetoothhelper'
         }
