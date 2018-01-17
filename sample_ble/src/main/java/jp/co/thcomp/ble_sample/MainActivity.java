@@ -1,11 +1,14 @@
 package jp.co.thcomp.ble_sample;
 
+import android.Manifest;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
+import android.content.pm.PackageManager;
 import android.database.DataSetObserver;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.SwitchCompat;
 import android.view.View;
@@ -29,6 +32,7 @@ import java.util.UUID;
 import jp.co.thcomp.bluetoothhelper.BleCentral;
 import jp.co.thcomp.bluetoothhelper.BlePeripheral;
 import jp.co.thcomp.bluetoothhelper.FoundLeDevice;
+import jp.co.thcomp.util.RuntimePermissionUtil;
 import jp.co.thcomp.util.ToastUtil;
 
 public class MainActivity extends AppCompatActivity {
@@ -52,20 +56,38 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        ((SwitchCompat) findViewById(R.id.swWorkMode)).setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
-                changeBLEMode(checked);
-            }
-        });
+//        ((SwitchCompat) findViewById(R.id.swWorkMode)).setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+//            @Override
+//            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+//                changeBLEMode(((SwitchCompat) findViewById(R.id.swWorkSwitch)).isChecked());
+//            }
+//        });
         ((SwitchCompat) findViewById(R.id.swWorkSwitch)).setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
-            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
-                // 念のため、Peripheral / Centralのいずれかで初期化されているか確認し、されていない場合は初期化する
-                if ((mBleCentral == null) && (mBlePeripheral == null)) {
+            public void onCheckedChanged(final CompoundButton compoundButton, boolean checked) {
+                if (checked) {
                     boolean workMode = ((SwitchCompat) findViewById(R.id.swWorkMode)).isChecked();
                     if (workMode == ModeCentral) {
-                        startBleCentral();
+                        RuntimePermissionUtil.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION}, new RuntimePermissionUtil.OnRequestPermissionsResultListener() {
+                            @Override
+                            public void onRequestPermissionsResult(String[] permissions, int[] grantResults) {
+                                boolean allGrants = true;
+
+                                for (int grantResult : grantResults) {
+                                    if (grantResult != PackageManager.PERMISSION_GRANTED) {
+                                        allGrants = false;
+                                        break;
+                                    }
+                                }
+
+                                if (allGrants) {
+                                    startBleCentral();
+                                } else {
+                                    ToastUtil.showToast(MainActivity.this, R.string.cannot_start_central, Toast.LENGTH_LONG);
+                                    compoundButton.setChecked(false);
+                                }
+                            }
+                        });
                     } else {
                         startBlePeripheral();
                     }
@@ -79,6 +101,26 @@ public class MainActivity extends AppCompatActivity {
         mServiceListAdapter = new ServiceListAdapter();
         (mServiceExListView = findViewById(R.id.elvServiceList)).setAdapter(mServiceListAdapter);
         (mPeripheralExListView = findViewById(R.id.elvPeripheralList)).setAdapter(mPeripheralListAdapter);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+
+        if (mBlePeripheral != null) {
+            mBlePeripheral.stop();
+            mBlePeripheral = null;
+        }
+        if (mBleCentral != null) {
+            mBleCentral.stop();
+            mBleCentral = null;
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        RuntimePermissionUtil.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
     private void changeViewStatus(boolean startBle) {
@@ -105,30 +147,30 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void changeBLEMode(boolean started) {
-        if (started) {
-            SwitchCompat swWorkMode = findViewById(R.id.swWorkMode);
-
-            if (swWorkMode.isChecked() == ModeCentral) {
-                startBleCentral();
-            } else {
-                startBlePeripheral();
-            }
-        } else {
-            if (mBlePeripheral != null) {
-                mBlePeripheral.stop();
-                mBlePeripheral = null;
-            }
-            if (mBleCentral != null) {
-                mBleCentral.stop();
-                mBleCentral = null;
-            }
-        }
-    }
+//    private void changeBLEMode(boolean started) {
+//        if (started) {
+//            SwitchCompat swWorkMode = findViewById(R.id.swWorkMode);
+//
+//            if (swWorkMode.isChecked() == ModeCentral) {
+//                startBleCentral();
+//            } else {
+//                startBlePeripheral();
+//            }
+//        } else {
+//            if (mBlePeripheral != null) {
+//                mBlePeripheral.stop();
+//                mBlePeripheral = null;
+//            }
+//            if (mBleCentral != null) {
+//                mBleCentral.stop();
+//                mBleCentral = null;
+//            }
+//        }
+//    }
 
     private void startBleCentral() {
         if (mBleCentral == null) {
-            mBleCentral = new BleCentral(this);
+            mBleCentral = new BleCentral(MainActivity.this);
             mBleCentral.setOnBluetoothStatusListener(new BleCentral.OnBluetoothStatusListener() {
                 @Override
                 public void onStatusChange(int status, int scanMode) {
@@ -398,7 +440,7 @@ public class MainActivity extends AppCompatActivity {
                                     List<BluetoothGattCharacteristic> characteristicList = (List<BluetoothGattCharacteristic>) fLlCharacteristicListLayout.getTag(ViewTagCharacteristicList);
                                     if (characteristicList != null && characteristicList.contains(characteristic)) {
                                         View characteristicView = getLayoutInflater().inflate(R.layout.item_characteristic_list, fLlCharacteristicListLayout, false);
-                                        final EditText fEtCharacteristic = characteristicView.findViewById(R.id.btnUpdateCharacteristic);
+                                        final EditText fEtCharacteristic = characteristicView.findViewById(R.id.etCharacteristic);
                                         Button btnUpdateCharacteristic = characteristicView.findViewById(R.id.btnUpdateCharacteristic);
 
                                         fEtCharacteristic.setText(new String(characteristic.getValue()));

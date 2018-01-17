@@ -22,4 +22,5 @@
     <string name="notify_characteristic_changed">notify characteristic changed</string>
     <string name="readonly">readonly</string>
     <string name="writable">writable</string>
+    <string name="cannot_start_central">cannot start central without permissions</string>
 </resources>
