@@ -1,6 +1,8 @@
 package jp.co.thcomp.bluetoothhelper;
 
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.le.ScanFilter;
+import android.bluetooth.le.ScanSettings;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -10,6 +12,7 @@ import android.os.Message;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import jp.co.thcomp.util.LogUtil;
@@ -168,6 +171,41 @@ public class DeviceDiscoverer {
         return ret;
     }
 
+    public boolean startDiscoverLeDevices(long durationMS, List<ScanFilter> filters, ScanSettings settings, OnFoundLeDeviceListener listener) {
+        LogUtil.d(TAG, "startDiscoverDevices(S)");
+
+        boolean ret = false;
+        if ((ret = mBtHelper.startDiscoverLeDevices(filters, settings, mFoundLeDeviceListener))) {
+            long timeoutTimeMS = System.currentTimeMillis() + durationMS;
+
+            if (durationMS == 0) {
+                // durationが指定されたときは無制限待ち
+                timeoutTimeMS = Long.MAX_VALUE;
+                durationMS = Long.MAX_VALUE;
+            } else {
+                timeoutTimeMS += durationMS;
+            }
+
+            synchronized (mLeTimeoutTimeMap) {
+                ArrayList<OnFoundLeDeviceListener> listenerList = mLeTimeoutTimeMap.get(timeoutTimeMS);
+
+                if (listenerList == null) {
+                    listenerList = new ArrayList<OnFoundLeDeviceListener>();
+                    mLeTimeoutTimeMap.put(timeoutTimeMS, listenerList);
+                }
+
+                if (!listenerList.contains(listener)) {
+                    listenerList.add(listener);
+                }
+            }
+
+            mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgNotifyLeTimeout, timeoutTimeMS), durationMS);
+        }
+
+        LogUtil.d(TAG, "startDiscoverDevices(E): " + ret);
+        return ret;
+    }
+
     public void stopDiscoverLeDevices(OnFoundLeDeviceListener listener, boolean removeAllMatchedListener) {
         LogUtil.d(TAG, "stopDiscoverDevices(S)");
         synchronized (mLeTimeoutTimeMap) {
@@ -193,7 +231,7 @@ public class DeviceDiscoverer {
                     mContext.unregisterReceiver(mReceiver);
                 }
 
-                mBtHelper.stopDiscoverDevices();
+                mBtHelper.stopDiscoverLeDevices();
             }
         }
         LogUtil.d(TAG, "stopDiscoverDevices(E)");

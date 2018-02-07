@@ -12,6 +12,10 @@ public class BleTransferSettings {
         mTargetDevice = targetDevice;
     }
 
+    public BluetoothDevice getDevice(){
+        return mTargetDevice;
+    }
+
     public void setMTU(int mtu) {
         mMtu = mtu;
     }
