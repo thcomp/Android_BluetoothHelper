@@ -54,6 +54,7 @@ public class DeviceDiscoverer {
     private HashMap<Long, ArrayList<OnFoundDeviceListener>> mTimeoutTimeMap = new HashMap<Long, ArrayList<OnFoundDeviceListener>>();
     private HashMap<Long, ArrayList<OnFoundLeDeviceListener>> mLeTimeoutTimeMap = new HashMap<Long, ArrayList<OnFoundLeDeviceListener>>();
     private Handler mMainLooperHandler;
+    private boolean mRegisteredReceiver = false;
 
     private DeviceDiscoverer(Context context) {
         if (context == null) {
@@ -81,8 +82,9 @@ public class DeviceDiscoverer {
             }
 
             synchronized (mTimeoutTimeMap) {
-                if (mTimeoutTimeMap.size() == 0) {
+                if (mTimeoutTimeMap.size() == 0 && !mRegisteredReceiver) {
                     LogUtil.d(TAG, "register broadcast receiver");
+                    mRegisteredReceiver = true;
                     mContext.registerReceiver(mReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
                 }
 
@@ -125,8 +127,9 @@ public class DeviceDiscoverer {
                     }
                 }
 
-                if (mTimeoutTimeMap.size() == 0) {
+                if (mTimeoutTimeMap.size() == 0 && mRegisteredReceiver) {
                     LogUtil.d(TAG, "unregister broadcast receiver");
+                    mRegisteredReceiver =false;
                     mContext.unregisterReceiver(mReceiver);
                 }
 
@@ -226,8 +229,9 @@ public class DeviceDiscoverer {
                     }
                 }
 
-                if (mLeTimeoutTimeMap.size() == 0) {
+                if (mLeTimeoutTimeMap.size() == 0 && mRegisteredReceiver) {
                     LogUtil.d(TAG, "unregister broadcast receiver");
+                    mRegisteredReceiver = false;
                     mContext.unregisterReceiver(mReceiver);
                 }
 
@@ -258,8 +262,9 @@ public class DeviceDiscoverer {
                                 }
                             }
 
-                            if (mTimeoutTimeMap.size() == 0) {
+                            if (mTimeoutTimeMap.size() == 0 && mRegisteredReceiver) {
                                 LogUtil.d(TAG, "unregister broadcast receiver");
+                                mRegisteredReceiver = false;
                                 mContext.unregisterReceiver(mReceiver);
                             }
                         }

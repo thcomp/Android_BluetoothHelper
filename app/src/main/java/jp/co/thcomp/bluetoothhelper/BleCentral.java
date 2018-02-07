@@ -105,7 +105,7 @@ public class BleCentral {
         LogUtil.d(TAG, "stopScanPeripheral(S):");
         if ((mCentralState & CentralStateDiscoverPeripheral) == CentralStateDiscoverPeripheral) {
             mCentralState &= (~CentralStateDiscoverPeripheral);
-            mDeviceDiscoverer.stopDiscoverLeDevices(mFoundLeDeviceListener, true);
+            mDeviceDiscoverer.stopDiscoverLeDevices(mRootFoundLeDeviceListener, true);
         }
         LogUtil.d(TAG, "stopScanPeripheral(E):");
     }
