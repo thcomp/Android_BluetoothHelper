@@ -1,6 +1,8 @@
 package jp.co.thcomp.bluetoothhelper;
 
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.le.ScanFilter;
+import android.bluetooth.le.ScanSettings;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -10,6 +12,7 @@ import android.os.Message;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import jp.co.thcomp.util.LogUtil;
@@ -51,6 +54,7 @@ public class DeviceDiscoverer {
     private HashMap<Long, ArrayList<OnFoundDeviceListener>> mTimeoutTimeMap = new HashMap<Long, ArrayList<OnFoundDeviceListener>>();
     private HashMap<Long, ArrayList<OnFoundLeDeviceListener>> mLeTimeoutTimeMap = new HashMap<Long, ArrayList<OnFoundLeDeviceListener>>();
     private Handler mMainLooperHandler;
+    private boolean mRegisteredReceiver = false;
 
     private DeviceDiscoverer(Context context) {
         if (context == null) {
@@ -78,8 +82,9 @@ public class DeviceDiscoverer {
             }
 
             synchronized (mTimeoutTimeMap) {
-                if (mTimeoutTimeMap.size() == 0) {
+                if (mTimeoutTimeMap.size() == 0 && !mRegisteredReceiver) {
                     LogUtil.d(TAG, "register broadcast receiver");
+                    mRegisteredReceiver = true;
                     mContext.registerReceiver(mReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
                 }
 
@@ -122,8 +127,9 @@ public class DeviceDiscoverer {
                     }
                 }
 
-                if (mTimeoutTimeMap.size() == 0) {
+                if (mTimeoutTimeMap.size() == 0 && mRegisteredReceiver) {
                     LogUtil.d(TAG, "unregister broadcast receiver");
+                    mRegisteredReceiver =false;
                     mContext.unregisterReceiver(mReceiver);
                 }
 
@@ -138,6 +144,41 @@ public class DeviceDiscoverer {
 
         boolean ret = false;
         if ((ret = mBtHelper.startDiscoverLeDevices(mFoundLeDeviceListener))) {
+            long timeoutTimeMS = System.currentTimeMillis() + durationMS;
+
+            if (durationMS == 0) {
+                // durationが指定されたときは無制限待ち
+                timeoutTimeMS = Long.MAX_VALUE;
+                durationMS = Long.MAX_VALUE;
+            } else {
+                timeoutTimeMS += durationMS;
+            }
+
+            synchronized (mLeTimeoutTimeMap) {
+                ArrayList<OnFoundLeDeviceListener> listenerList = mLeTimeoutTimeMap.get(timeoutTimeMS);
+
+                if (listenerList == null) {
+                    listenerList = new ArrayList<OnFoundLeDeviceListener>();
+                    mLeTimeoutTimeMap.put(timeoutTimeMS, listenerList);
+                }
+
+                if (!listenerList.contains(listener)) {
+                    listenerList.add(listener);
+                }
+            }
+
+            mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgNotifyLeTimeout, timeoutTimeMS), durationMS);
+        }
+
+        LogUtil.d(TAG, "startDiscoverDevices(E): " + ret);
+        return ret;
+    }
+
+    public boolean startDiscoverLeDevices(long durationMS, List<ScanFilter> filters, ScanSettings settings, OnFoundLeDeviceListener listener) {
+        LogUtil.d(TAG, "startDiscoverDevices(S)");
+
+        boolean ret = false;
+        if ((ret = mBtHelper.startDiscoverLeDevices(filters, settings, mFoundLeDeviceListener))) {
             long timeoutTimeMS = System.currentTimeMillis() + durationMS;
 
             if (durationMS == 0) {
@@ -188,12 +229,13 @@ public class DeviceDiscoverer {
                     }
                 }
 
-                if (mLeTimeoutTimeMap.size() == 0) {
+                if (mLeTimeoutTimeMap.size() == 0 && mRegisteredReceiver) {
                     LogUtil.d(TAG, "unregister broadcast receiver");
+                    mRegisteredReceiver = false;
                     mContext.unregisterReceiver(mReceiver);
                 }
 
-                mBtHelper.stopDiscoverDevices();
+                mBtHelper.stopDiscoverLeDevices();
             }
         }
         LogUtil.d(TAG, "stopDiscoverDevices(E)");
@@ -220,8 +262,9 @@ public class DeviceDiscoverer {
                                 }
                             }
 
-                            if (mTimeoutTimeMap.size() == 0) {
+                            if (mTimeoutTimeMap.size() == 0 && mRegisteredReceiver) {
                                 LogUtil.d(TAG, "unregister broadcast receiver");
+                                mRegisteredReceiver = false;
                                 mContext.unregisterReceiver(mReceiver);
                             }
                         }

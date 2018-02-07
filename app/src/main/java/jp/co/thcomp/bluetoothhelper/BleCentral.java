@@ -38,11 +38,11 @@ public class BleCentral {
     private OnFoundLeDeviceListener mFoundLeDeviceListener;
     private int mCentralState = CentralStateInit;
     private DeviceDiscoverer mDeviceDiscoverer;
-    private HashMap<BluetoothDevice, OnServicesDiscoveredListener> mDiscoveringServiceDeviceMap = new HashMap<>();
+    private HashMap<String, OnServicesDiscoveredListener> mDiscoveringServiceDeviceMap = new HashMap<>();
     private HashMap<LocalCharacteristicInfo, List<OnCharacteristicReadListener>> mReadCharacteristicMap = new HashMap<>();
-    private HashMap<BluetoothDevice, FoundLeDevice> mFoundLeDeviceMap = new HashMap<BluetoothDevice, FoundLeDevice>();
-    private HashMap<BluetoothDevice, BluetoothGatt> mConnectedGattMap = new HashMap<>();
-    private HashMap<BluetoothDevice, Long> mConnectionTimeoutMap = new HashMap<>();
+    private HashMap<String, FoundLeDevice> mFoundLeDeviceMap = new HashMap<>();
+    private HashMap<String, BluetoothGatt> mConnectedGattMap = new HashMap<>();
+    private HashMap<String, Long> mConnectionTimeoutMap = new HashMap<>();
     private BluetoothGattCharacteristic mCurrentReadingCharacteristic = null;
     private ArrayList<BluetoothGattCharacteristic> mRequestingReadCharacteristicList = new ArrayList<>();
     private Handler mMainLooperHandler;
@@ -85,13 +85,13 @@ public class BleCentral {
         }
     }
 
-    public boolean startScanPeripheral(int duration) {
-        LogUtil.d(TAG, "startScanPeripheral(S): duration: " + duration);
+    public boolean startScanPeripheral(int durationMS) {
+        LogUtil.d(TAG, "startScanPeripheral(S): duration: " + durationMS);
 
         boolean ret = false;
         if (((mCentralState & CentralStateStart) == CentralStateStart) && ((mCentralState & CentralStateDiscoverPeripheral) == CentralStateInit)) {
             mFoundLeDeviceMap.clear();
-            ret = mDeviceDiscoverer.startDiscoverLeDevices(duration, mRootFoundLeDeviceListener);
+            ret = mDeviceDiscoverer.startDiscoverLeDevices(durationMS, mRootFoundLeDeviceListener);
             if (ret) {
                 mCentralState |= CentralStateDiscoverPeripheral;
             }
@@ -105,7 +105,7 @@ public class BleCentral {
         LogUtil.d(TAG, "stopScanPeripheral(S):");
         if ((mCentralState & CentralStateDiscoverPeripheral) == CentralStateDiscoverPeripheral) {
             mCentralState &= (~CentralStateDiscoverPeripheral);
-            mDeviceDiscoverer.stopDiscoverLeDevices(mFoundLeDeviceListener, true);
+            mDeviceDiscoverer.stopDiscoverLeDevices(mRootFoundLeDeviceListener, true);
         }
         LogUtil.d(TAG, "stopScanPeripheral(E):");
     }
@@ -118,14 +118,15 @@ public class BleCentral {
         LogUtil.d(TAG, "discoverServices(S)");
 
         boolean ret = false;
-        if (!mDiscoveringServiceDeviceMap.containsKey(device)) {
+        String macAddress = device.getAddress();
+        if (!mDiscoveringServiceDeviceMap.containsKey(macAddress)) {
             connectPeripheral(device);
 
             synchronized (mConnectedGattMap) {
-                BluetoothGatt gatt = mConnectedGattMap.get(device);
+                BluetoothGatt gatt = mConnectedGattMap.get(macAddress);
                 if (gatt != null) {
                     if ((ret = gatt.discoverServices())) {
-                        mDiscoveringServiceDeviceMap.put(device, listener);
+                        mDiscoveringServiceDeviceMap.put(macAddress, listener);
                     } else {
                         LogUtil.e(TAG, "discover service failed");
                     }
@@ -142,10 +143,12 @@ public class BleCentral {
 
         connectPeripheral(fDevice);
 
-        final BluetoothGatt fGatt = mConnectedGattMap.get(fDevice);
+        String macAddress = fDevice.getAddress();
+        final BluetoothGatt fGatt = mConnectedGattMap.get(macAddress);
+
         if (fGatt != null) {
             BluetoothGattService service = null;
-            FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(fDevice);
+            FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(macAddress);
             if (foundLeDevice != null) {
                 List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
                 if (serviceList != null && serviceList.size() > 0) {
@@ -201,7 +204,8 @@ public class BleCentral {
         connectPeripheral(device);
 
         BluetoothGattCharacteristic[] ret = null;
-        FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(device);
+        String macAddress = device.getAddress();
+        FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(macAddress);
         if (foundLeDevice != null) {
             List<BluetoothGattService> serviceList = foundLeDevice.getServiceList();
             BluetoothGattService service = null;
@@ -257,7 +261,8 @@ public class BleCentral {
 
     public void readCharacteristic(final BluetoothDevice device, final BluetoothGattCharacteristic characteristic, final OnCharacteristicReadListener listener) {
         LogUtil.d(TAG, "readCharacteristic(S): characteristic uuid: " + characteristic.getUuid());
-        final BluetoothGatt gatt = mConnectedGattMap.get(device);
+        String macAddress = device.getAddress();
+        final BluetoothGatt gatt = mConnectedGattMap.get(macAddress);
         byte[] data = characteristic.getValue();
 
         if (gatt != null) {
@@ -294,13 +299,14 @@ public class BleCentral {
     public void connectPeripheral(BluetoothDevice device) {
         LogUtil.d(TAG, "connectPeripheral(S)");
         synchronized (mConnectedGattMap) {
-            BluetoothGatt gatt = mConnectedGattMap.get(device);
+            String macAddress = device.getAddress();
+            BluetoothGatt gatt = mConnectedGattMap.get(macAddress);
             if (gatt == null) {
                 gatt = device.connectGatt(mContext, false, mBtGattCallback);
                 if (gatt != null) {
                     if (gatt.connect()) {
                         // 実際には未だ接続は完了していない(コネクション確立要求を受け付けただけ)
-                        mConnectedGattMap.put(device, gatt);
+                        mConnectedGattMap.put(macAddress, gatt);
                     } else {
                         LogUtil.e(TAG, "BluetoothGatt connect failed");
                     }
@@ -312,17 +318,19 @@ public class BleCentral {
 
     public void disconnectPeripheral(BluetoothDevice device) {
         LogUtil.d(TAG, "disconnectPeripheral(S)");
+
+        String macAddress = device.getAddress();
         synchronized (mConnectedGattMap) {
-            BluetoothGatt gatt = mConnectedGattMap.remove(device);
+            BluetoothGatt gatt = mConnectedGattMap.remove(macAddress);
             if (gatt != null) {
                 gatt.disconnect();
                 gatt.close();
             }
         }
 
-        mFoundLeDeviceMap.remove(device);
-        mConnectionTimeoutMap.remove(device);
-        mDiscoveringServiceDeviceMap.remove(device);
+        mFoundLeDeviceMap.remove(macAddress);
+        mConnectionTimeoutMap.remove(macAddress);
+        mDiscoveringServiceDeviceMap.remove(macAddress);
 
         LogUtil.d(TAG, "disconnectPeripheral(E)");
     }
@@ -360,11 +368,12 @@ public class BleCentral {
         @Override
         public void onFoundLeDevice(FoundLeDevice foundLeDevice) {
             boolean notifyFoundLeDevice = false;
+            String macAddress = foundLeDevice.getDevice().getAddress();
 
-            if (!mFoundLeDeviceMap.containsKey(foundLeDevice.getDevice())) {
-                mFoundLeDeviceMap.put(foundLeDevice.getDevice(), foundLeDevice);
+            if (!mFoundLeDeviceMap.containsKey(macAddress)) {
+                mFoundLeDeviceMap.put(macAddress, foundLeDevice);
 
-                if (!mConnectedGattMap.containsKey(foundLeDevice.getDevice())) {
+                if (!mConnectedGattMap.containsKey(macAddress)) {
                     notifyFoundLeDevice = true;
                 }
             }
@@ -393,8 +402,9 @@ public class BleCentral {
                 ConnectionInfo connectInfo = (ConnectionInfo) message.obj;
                 if ((connectInfo != null) && (connectInfo.device != null)) {
                     boolean connectionTimeout = false;
+                    String macAddress = connectInfo.device.getAddress();
                     synchronized (mConnectedGattMap) {
-                        Long connectionTimeoutMS = mConnectionTimeoutMap.get(connectInfo.device);
+                        Long connectionTimeoutMS = mConnectionTimeoutMap.get(macAddress);
                         if (connectionTimeoutMS != null) {
                             if (connectionTimeoutMS > connectInfo.connectionTimeoutMS) {
                                 // 更新されているので、無視
@@ -420,18 +430,20 @@ public class BleCentral {
             super.onConnectionStateChange(gatt, status, newState);
 
             BluetoothDevice device = gatt.getDevice();
+            String macAddress = device.getAddress();
+
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 LogUtil.d(TAG, "BluetoothGatt.STATE_CONNECTED: discover services: " + gatt.getDevice().getAddress());
 
                 OnServicesDiscoveredListener listener;
-                if ((listener = mDiscoveringServiceDeviceMap.remove(device)) != null) {
+                if ((listener = mDiscoveringServiceDeviceMap.remove(macAddress)) != null) {
                     // サービス検索が空ぶっていたので、再度実行
                     discoverServices(device, listener);
                 }
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 LogUtil.d(TAG, "BluetoothGatt.STATE_DISCONNECTED");
                 synchronized (mConnectedGattMap) {
-                    mConnectionTimeoutMap.remove(device);
+                    mConnectionTimeoutMap.remove(macAddress);
                 }
                 disconnectPeripheral(device);
             }
@@ -442,21 +454,22 @@ public class BleCentral {
             super.onServicesDiscovered(gatt, status);
 
             BluetoothDevice device = gatt.getDevice();
+            String macAddress = device.getAddress();
 
             LogUtil.d(TAG, "onServicesDiscovered: " + device.getAddress());
 
             // コネクションタイマー更新
             synchronized (mConnectedGattMap) {
                 long connectionTimeoutMS = System.currentTimeMillis() + mConnectionTimeoutMS;
-                mConnectionTimeoutMap.put(gatt.getDevice(), System.currentTimeMillis() + mConnectionTimeoutMS);
+                mConnectionTimeoutMap.put(macAddress, System.currentTimeMillis() + mConnectionTimeoutMS);
                 mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgConnectionTimeout, new ConnectionInfo(device, connectionTimeoutMS)), mConnectionTimeoutMS);
             }
 
-            OnServicesDiscoveredListener listener = mDiscoveringServiceDeviceMap.remove(device);
+            OnServicesDiscoveredListener listener = mDiscoveringServiceDeviceMap.remove(macAddress);
             if (listener != null) {
                 // 見つかったserviceはこのタイミングでしか取得できないことが多い？次のデバイス発見通知で得られるScanResultから取得できなかった模様
                 List<BluetoothGattService> serviceList = gatt.getServices();
-                FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(device);
+                FoundLeDevice foundLeDevice = mFoundLeDeviceMap.get(macAddress);
 
                 if (foundLeDevice != null) {
                     // 既にデバイスが発見された後のときは、保持しているインスタンスにServiceリストを設定
@@ -479,6 +492,7 @@ public class BleCentral {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 LogUtil.d(TAG, "onCharacteristicRead: UUID: " + characteristic.getUuid() + ", value: " + Arrays.toString(characteristic.getValue()));
 
+                BluetoothDevice device = gatt.getDevice();
                 synchronized (mRequestingReadCharacteristicList) {
                     mCurrentReadingCharacteristic = null;
                     while (mRequestingReadCharacteristicList.size() > 0) {
@@ -491,7 +505,7 @@ public class BleCentral {
                     }
                 }
 
-                LocalCharacteristicInfo localCharacteristicInfo = new LocalCharacteristicInfo(gatt.getDevice(), characteristic);
+                LocalCharacteristicInfo localCharacteristicInfo = new LocalCharacteristicInfo(device, characteristic);
                 List<OnCharacteristicReadListener> listenerList = mReadCharacteristicMap.remove(localCharacteristicInfo);
                 if (listenerList != null) {
                     for (OnCharacteristicReadListener listener : listenerList) {
@@ -502,8 +516,9 @@ public class BleCentral {
                 // コネクションタイマー更新
                 synchronized (mConnectedGattMap) {
                     long connectionTimeoutMS = System.currentTimeMillis() + mConnectionTimeoutMS;
-                    mConnectionTimeoutMap.put(gatt.getDevice(), System.currentTimeMillis() + mConnectionTimeoutMS);
-                    mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgConnectionTimeout, new ConnectionInfo(gatt.getDevice(), connectionTimeoutMS)), mConnectionTimeoutMS);
+                    String macAddress = device.getAddress();
+                    mConnectionTimeoutMap.put(macAddress, System.currentTimeMillis() + mConnectionTimeoutMS);
+                    mMainLooperHandler.sendMessageDelayed(Message.obtain(mMainLooperHandler, MsgConnectionTimeout, new ConnectionInfo(device, connectionTimeoutMS)), mConnectionTimeoutMS);
                 }
             }
         }

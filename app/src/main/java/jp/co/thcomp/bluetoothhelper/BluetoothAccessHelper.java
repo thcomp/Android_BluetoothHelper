@@ -8,7 +8,9 @@ import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -409,6 +411,10 @@ public class BluetoothAccessHelper {
     }
 
     boolean startDiscoverLeDevices(OnFoundLeDeviceListener foundLeDeviceListener) {
+        return startDiscoverLeDevices(null, null, foundLeDeviceListener);
+    }
+
+    boolean startDiscoverLeDevices(List<ScanFilter> filters, ScanSettings settings, OnFoundLeDeviceListener foundLeDeviceListener) {
         boolean ret = false;
 
         if (sAdapter != null) {
@@ -416,7 +422,11 @@ public class BluetoothAccessHelper {
                 ret = sAdapter.startLeScan(mLeScanCallback);
                 mFoundLeDeviceListener = foundLeDeviceListener;
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                sAdapter.getBluetoothLeScanner().startScan(mLeScanCallback2);
+                if(filters == null && settings == null){
+                    sAdapter.getBluetoothLeScanner().startScan(mLeScanCallback2);
+                }else{
+                    sAdapter.getBluetoothLeScanner().startScan(filters, settings, mLeScanCallback2);
+                }
                 mFoundLeDeviceListener = foundLeDeviceListener;
                 ret = true;
             }

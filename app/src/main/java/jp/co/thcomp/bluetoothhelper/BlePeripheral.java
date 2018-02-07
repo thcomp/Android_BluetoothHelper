@@ -17,6 +17,8 @@ import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
 import android.os.Build;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
@@ -30,6 +32,7 @@ public class BlePeripheral {
     public static final int StatusDisableBluetooth = BluetoothAccessHelper.StatusDisableBluetooth;
     public static final int StatusNoSupportBluetooth = BluetoothAccessHelper.StatusNoSupportBluetooth;
     public static final int StatusInit = BluetoothAccessHelper.StatusInit;
+    public static final int StatusStartBluetooth = BluetoothAccessHelper.StatusStartBluetooth;
     public static final int StatusStartBleAdvertising = BluetoothAccessHelper.StatusFirstExtension + 1;
     public static final int StatusDisableBleAdvertising = BluetoothAccessHelper.StatusFirstExtension + 2;
 
@@ -96,7 +99,7 @@ public class BlePeripheral {
     private AdvertiseSettings.Builder mSettingsBuilder = new AdvertiseSettings.Builder();
     private AdvertiseData.Builder mDataBuilder = new AdvertiseData.Builder();
     private BluetoothGattServer mGattServer;
-    private HashMap<BluetoothDevice, BleTransferSettings> mTransferSettingMap = new HashMap<>();
+    private HashMap<String, BleTransferSettings> mTransferSettingMap = new HashMap<>();
     private OnServiceChangedListener mServiceChangedListener;
 
     public BlePeripheral(Context context) {
@@ -273,11 +276,11 @@ public class BlePeripheral {
             characteristic.setValue(data);
             ret = service.addCharacteristic(characteristic);
 
-            Set<BluetoothDevice> deviceSet = mTransferSettingMap.keySet();
-            if (deviceSet != null && deviceSet.size() > 0) {
+            Collection<BleTransferSettings> settingSet = mTransferSettingMap.values();
+            if (settingSet != null && settingSet.size() > 0) {
                 // このPeripheralと接続している全てのCentralへ変更を通知
-                for (BluetoothDevice device : deviceSet) {
-                    mGattServer.notifyCharacteristicChanged(device, characteristic, confirm);
+                for (BleTransferSettings setting : settingSet) {
+                    mGattServer.notifyCharacteristicChanged(setting.getDevice(), characteristic, confirm);
                 }
             }
         }
@@ -300,11 +303,11 @@ public class BlePeripheral {
         if (characteristic != null) {
             characteristic.setValue(data);
 
-            Set<BluetoothDevice> deviceSet = mTransferSettingMap.keySet();
-            if (deviceSet != null && deviceSet.size() > 0) {
+            Collection<BleTransferSettings> settingSet = mTransferSettingMap.values();
+            if (settingSet != null && settingSet.size() > 0) {
                 // このPeripheralと接続している全てのCentralへ変更を通知
-                for (BluetoothDevice device : deviceSet) {
-                    mGattServer.notifyCharacteristicChanged(device, characteristic, confirm);
+                for (BleTransferSettings setting : settingSet) {
+                    mGattServer.notifyCharacteristicChanged(setting.getDevice(), characteristic, confirm);
                 }
             }
         }
@@ -442,18 +445,19 @@ public class BlePeripheral {
         public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
             super.onConnectionStateChange(device, status, newState);
             LogUtil.d(TAG, "onConnectionStateChange");
+            String macAddress = device.getAddress();
 
             switch (newState) {
                 case BluetoothProfile.STATE_CONNECTED:
                     synchronized (mTransferSettingMap) {
-                        if (!mTransferSettingMap.containsKey(device)) {
-                            mTransferSettingMap.put(device, new BleTransferSettings(device));
+                        if (!mTransferSettingMap.containsKey(macAddress)) {
+                            mTransferSettingMap.put(macAddress, new BleTransferSettings(device));
                         }
                     }
                     break;
                 case BluetoothProfile.STATE_DISCONNECTED:
                     synchronized (mTransferSettingMap) {
-                        mTransferSettingMap.remove(device);
+                        mTransferSettingMap.remove(macAddress);
                     }
                     break;
             }
